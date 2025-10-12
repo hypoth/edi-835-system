@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: edi835-postgres
+    environment:
+      POSTGRES_DB: edi835config
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - edi835-network
+
+  backend:
+    build: ./edi835-processor
+    container_name: edi835-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: edi835config
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      COSMOS_ENDPOINT: ${COSMOS_ENDPOINT}
+      COSMOS_KEY: ${COSMOS_KEY}
+      COSMOS_DATABASE: claims
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - edi835-network
+    volumes:
+      - ./edi-output:/data/edi/output
+
+  frontend:
+    build: ./edi835-admin-portal
+    container_name: edi835-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - edi835-network
+
+volumes:
+  postgres_data:
+
+networks:
+  edi835-network:
+    driver: bridge

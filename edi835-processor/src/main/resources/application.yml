@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: edi835-processor
+  
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:edi835config}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  
+  cloud:
+    azure:
+      cosmos:
+        endpoint: ${COSMOS_ENDPOINT:https://your-account.documents.azure.com:443/}
+        key: ${COSMOS_KEY:your-cosmos-key}
+        database: ${COSMOS_DATABASE:claims}
+
+cosmos:
+  changefeed:
+    container: claims
+    lease-container: leases
+    host-name: ${HOSTNAME:edi835-processor}
+    max-items-count: 100
+    poll-interval-ms: 5000
+
+edi:
+  output-directory: ${EDI_OUTPUT_DIR:/data/edi/output}
+  temp-directory: ${EDI_TEMP_DIR:/data/edi/temp}
+  schema-directory: classpath:edi-schemas/
+  default-schema: X12_005010_835.xml
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.healthcare.edi835: DEBUG
+    io.xlate.edi: INFO
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /api/v1
