@@ -1,0 +1,730 @@
+# EDI 835 Remittance Processing System - Architecture
+
+## System Overview
+
+A two-part system for processing healthcare claims and generating EDI 835 remittance advice files with a web-based configuration portal.
+
+---
+
+## Part 1: Claims Processing & EDI 835 Generation (Java)
+
+### Technology Stack
+- **Language**: Java 17+
+- **Framework**: Spring Boot 3.x
+- **Streaming**: Azure Cosmos DB Change Feed
+- **EDI Processing**: StAEDI (Streaming API for EDI)
+- **Database**: Azure Cosmos DB (primary), PostgreSQL (for configuration/audit)
+- **Build Tool**: Maven
+
+### Core Components
+
+#### 1.1 Cosmos DB Change Feed Listener
+```
+Purpose: Listen to real-time claim changes from D0 engine in Cosmos DB
+- Azure Cosmos DB Change Feed Processor
+- Lease container management
+- Partition-based parallel processing
+- Checkpoint management for reliability
+- Filter for relevant document types (processed claims only)
+- Forward processed claims to Remittance Processor
+```
+
+#### 1.2 Remittance Processor
+```
+Purpose: Transform claims into remittance records with configurable aggregation
+
+Aggregation Strategy (Configured via Admin Portal):
+- Default: Payer/Payee combination
+- Optional: Insurance-based (BIN/PCN) bucketing
+- Custom grouping rules from configuration
+
+EDI File Generation Modes:
+1. AUTO-COMMIT (Default Criteria - Automatic):
+   - By Claim Count: Max number of claims per file
+   - By Amount: Max total claim amount per file
+   - By Time Duration: Daily/Weekly/Bi-weekly/Monthly
+   - Hybrid: Combination of above (first threshold triggers)
+
+2. MANUAL-COMMIT (Admin Approval Required):
+   - Admin reviews pending buckets
+   - Confirms file generation via UI portal
+   - Override thresholds if needed
+   - Schedule generation for specific time
+
+3. HYBRID-COMMIT (Configurable):
+   - Auto-commit based on hard limits
+   - Manual approval for soft limits
+   - Configurable approval rules per bucket type
+
+Processing Logic:
+- Fetch aggregation rules from Configuration Service
+- Group claims based on active bucketing strategy
+- Monitor thresholds (count, amount, time)
+- Trigger auto-generation OR flag for manual approval
+- Support multiple concurrent buckets
+- Handle claim adjustments and reversals
+- Track bucket state (ACCUMULATING, PENDING_APPROVAL, GENERATING, COMPLETED)
+```
+
+#### 1.3 EDI 835 Generator
+```
+Purpose: Generate compliant EDI 835 files using StAEDI
+
+StAEDI Features Utilized:
+- EDIStreamWriter for streaming generation
+- Schema-based validation (X12 5010 HIPAA)
+- Event-driven segment writing
+- Automatic envelope management (ISA/GS/ST)
+- Loop structure handling (1000/2000/2100)
+- Element and composite element generation
+
+Generation Process:
+- Initialize EDIStreamWriter with output stream
+- Configure X12 835 schema for validation
+- Write envelope segments (ISA/GS)
+- Generate transaction header (ST)
+- Write payment information (BPR, TRN)
+- Create payer/payee loops (N1)
+- Generate claim payment details (CLP)
+- Write service line items (SVC)
+- Add adjustment information (CAS)
+- Close transaction (SE) and groups (GE/IEA)
+- Validate output against HIPAA 5010 standards
+- Extract metadata for file naming
+```
+
+#### 1.4 File Naming Service
+```
+Purpose: Generate file names based on configurable templates
+
+Supported Naming Variables:
+- {payerId} - Payer identifier
+- {payeeId} - Payee/Provider identifier
+- {bucketId} - Bucket identifier
+- {timestamp} - File creation timestamp
+- {date} - Date in configured format (YYYYMMDD, YYYY-MM-DD, etc.)
+- {time} - Time in configured format (HHmmss, HH-mm-ss, etc.)
+- {sequenceNumber} - Auto-incrementing sequence
+- {binNumber} - Insurance BIN (if applicable)
+- {pcnNumber} - Insurance PCN (if applicable)
+- {claimCount} - Number of claims in file
+- {totalAmount} - Total claim amount (formatted)
+- {fileType} - Fixed identifier (e.g., "835", "RMT")
+- {environment} - Environment identifier (PROD, TEST, UAT)
+
+Template Examples:
+- {payerId}_{payeeId}_{timestamp}.835
+- EDI835_{bucketId}_{date}_{sequenceNumber}.txt
+- RMT_{payerId}_{date}_{time}_{claimCount}.x12
+- {payerId}_{binNumber}_{date}_SEQ{sequenceNumber}.edi
+- {environment}_{payerId}_{payeeId}_{timestamp}.835
+
+Format Options:
+- Date format: YYYYMMDD, YYYY-MM-DD, MMDDYYYY, etc.
+- Time format: HHmmss, HH-mm-ss, HHmmssSSS (with milliseconds)
+- Number padding: Sequence with leading zeros (e.g., 001, 0001)
+- Case conversion: UPPER, lower, CamelCase
+- Custom separators: underscore, hyphen, dot, none
+
+Validation:
+- Template syntax validation
+- Variable availability check
+- Unique filename guarantee (sequence increment on collision)
+- File system compatibility check (invalid character removal)
+```
+
+#### 1.4 Configuration Service
+```
+Purpose: Fetch configuration from admin portal
+- REST client to retrieve EDI rules
+- Payer configuration (ISA/GS identifiers)
+- Payment method settings
+- Adjustment reason code mappings
+- File naming template configuration
+```
+
+#### 1.5 File Delivery Service
+```
+Purpose: Deliver generated 835 files
+- SFTP/AS2 protocol support
+- File encryption (if required)
+- Transmission acknowledgment
+- Retry mechanism
+```
+
+### Project Structure
+```
+edi835-processor/
+├── src/main/java/com/healthcare/edi835/
+│   ├── config/
+│   │   ├── CosmosDbConfig.java
+│   │   ├── ChangeFeedConfig.java
+│   │   ├── RestClientConfig.java
+│   │   └── SchedulerConfig.java
+│   ├── model/
+│   │   ├── Claim.java
+│   │   ├── RemittanceAdvice.java
+│   │   ├── PaymentInfo.java
+│   │   └── EdiSegment.java
+│   ├── changefeed/
+│   │   ├── ClaimChangeFeedProcessor.java
+│   │   ├── ChangeFeedHandler.java
+│   │   └── LeaseContainerManager.java
+│   ├── service/
+│   │   ├── RemittanceProcessorService.java
+│   │   ├── ClaimAggregationService.java
+│   │   ├── BucketManagerService.java
+│   │   ├── ThresholdMonitorService.java
+│   │   ├── CommitCriteriaService.java
+│   │   ├── ApprovalWorkflowService.java
+│   │   ├── Edi835GeneratorService.java
+│   │   ├── FileNamingService.java
+│   │   ├── ConfigurationService.java
+│   │   └── FileDeliveryService.java
+│   ├── repository/
+│   │   ├── CosmosClaimRepository.java
+│   │   └── ConfigRepository.java (PostgreSQL)
+│   └── util/
+│       ├── EdiValidator.java
+│       ├── SegmentBuilder.java
+│       ├── StaediSchemaLoader.java
+│       └── FileNameTemplateParser.java
+├── src/main/resources/
+│   ├── application.yml
+│   ├── edi-schemas/
+│   │   ├── X12_005010_835.xml
+│   │   └── hipaa-5010-schema.xml
+│   └── edi-templates/
+└── pom.xml
+```
+
+### Key Dependencies (Maven)
+```xml
+<dependencies>
+    <!-- Spring Boot -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    
+    <!-- Azure Cosmos DB -->
+    <dependency>
+        <groupId>com.azure</groupId>
+        <artifactId>azure-cosmos</artifactId>
+        <version>4.51.0</version>
+    </dependency>
+    <dependency>
+        <groupId>com.azure</groupId>
+        <artifactId>azure-spring-data-cosmos</artifactId>
+        <version>5.7.0</version>
+    </dependency>
+    
+    <!-- StAEDI - EDI Processing -->
+    <dependency>
+        <groupId>io.xlate</groupId>
+        <artifactId>staedi</artifactId>
+        <version>1.28.0</version>
+    </dependency>
+    
+    <!-- PostgreSQL for Configuration -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+    </dependency>
+    
+    <!-- Additional utilities -->
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+```
+
+---
+
+## StAEDI Integration Details
+
+### Why StAEDI?
+
+StAEDI is a streaming API for EDI reading, writing, and validation in Java that follows the same conventions as StAX (XML API) using a "pull" processing flow for EDI parsing and an emit flow for EDI generation.
+
+**Key Advantages for This Architecture:**
+
+1. **Streaming Performance**: Perfect for high-throughput claim processing from Cosmos DB Change Feed with low memory footprint
+2. **Native X12 Support**: Full support for X12, EDIFACT, and TRADACOMS standards with built-in validation
+3. **HIPAA Compliance**: Schema-based validation including HIPAA implementation guides for healthcare industry requirements
+4. **Bidirectional Processing**: Features both reader/parser and writer/generator capabilities for future needs
+5. **Active Development**: Well-maintained with regular updates and strong community support
+
+### StAEDI Core Components Used
+
+#### EDIOutputFactory & EDIStreamWriter
+```java
+// Initialize StAEDI writer
+EDIOutputFactory factory = EDIOutputFactory.newFactory();
+OutputStream outputStream = new FileOutputStream(fileName);
+EDIStreamWriter writer = factory.createEDIStreamWriter(outputStream);
+
+// Configure schema for validation
+Schema schema = SchemaFactory.newFactory()
+    .createSchema(getClass().getResourceAsStream("/edi-schemas/X12_005010_835.xml"));
+writer.setSchema(schema);
+```
+
+#### Event-Driven Segment Generation
+```java
+// Write ISA segment
+writer.startInterchange();
+writer.writeStartSegment("ISA");
+writer.writeElement("00"); // Authorization qualifier
+writer.writeElement("          "); // Authorization info
+// ... continue with ISA elements
+
+// Write transaction set
+writer.startTransaction("835");
+// Write BPR, TRN, CLP, SVC segments...
+writer.endTransaction();
+writer.endInterchange();
+```
+
+#### Schema Validation
+- StAEDI provides EDI schemas that allow for user-specified validation rules
+- Validates segment occurrences, element types, element length constraints
+- Supports both standard X12 rules and HIPAA-specific implementation guides
+- Real-time validation during generation prevents invalid file creation
+
+### EDI 835 Schema Configuration
+
+StAEDI uses XML-based schemas to define EDI transaction structure:
+
+```xml
+<!-- X12_005010_835.xml excerpt -->
+<schema xmlns="http://xlate.io/EDISchema/v2">
+  <transaction>
+    <sequence>
+      <segment type="ST" minOccurs="1" maxOccurs="1"/>
+      <segment type="BPR" minOccurs="1" maxOccurs="1"/>
+      <segment type="TRN" minOccurs="1" maxOccurs="1"/>
+      <loop code="1000A" minOccurs="1" maxOccurs="1">
+        <segment type="N1" minOccurs="1" maxOccurs="1"/>
+        <segment type="N3" minOccurs="0" maxOccurs="1"/>
+        <segment type="N4" minOccurs="0" maxOccurs="1"/>
+      </loop>
+      <!-- Additional loops and segments -->
+    </sequence>
+  </transaction>
+</schema>
+```
+
+### Integration with File Naming Service
+
+StAEDI allows reading back generated data for file naming:
+
+```java
+// Extract metadata from generated EDI for file naming
+String payerId = extractFromISA(writer, ISA06); // Sender ID
+String payeeId = extractFromN1Loop(writer); // Payee identifier
+int claimCount = countCLPSegments(writer);
+BigDecimal totalAmount = sumFromBPRSegment(writer);
+```
+
+### Error Handling & Validation Events
+
+StAEDI reports validation events when EDI data does not match the schema, including invalid segments and elements as events
+
+```java
+// Validation error handling
+writer.setErrorHandler(new EDIStreamValidationErrorHandler() {
+    @Override
+    public void error(EDIStreamEvent event, EDIStreamValidationError error) {
+        log.error("Validation error at segment {}: {}", 
+            event.getLocation(), error.getMessage());
+        // Log to claim_processing_log table
+    }
+});
+```
+
+### Performance Considerations
+
+- **Streaming**: Processes claims incrementally, ideal for large buckets
+- **Memory Efficient**: Does not load entire EDI file in memory
+- **Scalable**: Can handle multiple concurrent file generations
+- **Thread-Safe**: Each EDIStreamWriter instance isolated per bucket
+
+---
+
+## Part 2: Admin Configuration Portal (React)
+
+### Technology Stack
+- **Language**: TypeScript
+- **Framework**: React 18+ (Note: React for web, not React Native)
+- **UI Library**: Material-UI / Ant Design
+- **State Management**: Redux Toolkit / Zustand
+- **API Client**: Axios / React Query
+- **Build Tool**: Vite / Create React App
+- **Backend API**: Spring Boot REST API
+
+### Core Features
+
+#### 2.1 Payer Management
+- Add/edit/delete payer configurations
+- ISA/GS qualifier settings
+- Interchange control numbers
+- Trading partner IDs
+
+#### 2.2 EDI Processing Rules
+- Claim grouping/bucketing rules
+  - Payer/Payee combination (default)
+  - Insurance-based (BIN/PCN) grouping
+  - Custom grouping expressions
+- File generation triggers & commit criteria
+  - Auto-commit thresholds (hard limits)
+  - Manual-commit approval workflows
+  - Hybrid commit rules (soft limits + approval)
+  - Override permissions and audit trail
+- Adjustment reason code mappings (CARC/RARC)
+- Service code transformations
+- Validation rules configuration
+
+#### 2.3 Payment Method Configuration
+- EFT (Electronic Funds Transfer) settings
+- Check payment rules
+- Banking information (routing, account numbers)
+- Payment consolidation rules
+
+#### 2.4 File Naming Configuration
+- **Template Builder** (drag-and-drop or text-based)
+  - Visual variable selector
+  - Real-time preview with sample data
+  - Template library (common patterns)
+  - Custom template creation
+  
+- **Variable Configuration**
+  - Date/time format selection
+  - Sequence number settings (start value, padding)
+  - Case conversion options
+  - Separator customization
+  
+- **Template Management**
+  - Save multiple templates
+  - Link templates to bucketing rules
+  - Default template assignment
+  - Template versioning and history
+  
+- **Validation & Testing**
+  - Template syntax validator
+  - Preview generator with real data
+  - Collision detection simulator
+  - File system compatibility checker
+
+#### 2.5 File Delivery Settings
+- SFTP/AS2 connection parameters
+- Transmission schedules
+- Encryption settings
+- Acknowledgment preferences
+
+#### 2.5 Operations Dashboard & Monitoring
+- **Executive Summary Dashboard** (for Operations Manager)
+  - Real-time active EDI accumulations overview
+  - Total number of pending files
+  - Claims count per bucket (live)
+  - Aggregated claim amounts by bucket
+  - Rejection/denial counts and percentages
+  - Files pending manual approval
+  - Recent file generation activity
+  - Alert notifications for threshold approaching
+  
+- **Detailed Monitoring**
+  - Recent file generation history
+  - Processing statistics and trends
+  - Error logs and exceptions
+  - File transmission status
+  - Performance metrics (throughput, latency)
+
+### Project Structure
+```
+edi835-admin-portal/
+├── src/
+│   ├── components/
+│   │   ├── common/
+│   │   │   ├── Header.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   └── Table.tsx
+│   │   ├── dashboard/
+│   │   │   ├── OperationsDashboard.tsx
+│   │   │   ├── SummaryCards.tsx
+│   │   │   ├── ActiveBucketsWidget.tsx
+│   │   │   ├── ClaimMetricsChart.tsx
+│   │   │   ├── RejectionAnalytics.tsx
+│   │   │   └── PendingApprovalsAlert.tsx
+│   │   ├── payers/
+│   │   │   ├── PayerList.tsx
+│   │   │   ├── PayerForm.tsx
+│   │   │   └── PayerDetails.tsx
+│   │   ├── bucketing/
+│   │   │   ├── BucketingRulesList.tsx
+│   │   │   ├── BucketingRuleForm.tsx
+│   │   │   └── RulePreview.tsx
+│   │   ├── thresholds/
+│   │   │   ├── ThresholdsList.tsx
+│   │   │   ├── ThresholdForm.tsx
+│   │   │   ├── ClaimCountThreshold.tsx
+│   │   │   ├── AmountThreshold.tsx
+│   │   │   └── TimeBasedThreshold.tsx
+│   │   ├── commitcriteria/
+│   │   │   ├── CommitCriteriaList.tsx
+│   │   │   ├── CommitCriteriaForm.tsx
+│   │   │   ├── AutoCommitConfig.tsx
+│   │   │   ├── ManualApprovalConfig.tsx
+│   │   │   └── HybridCommitConfig.tsx
+│   │   ├── filenaming/
+│   │   │   ├── FileNamingTemplateList.tsx
+│   │   │   ├── TemplateBuilder.tsx
+│   │   │   ├── VariableSelector.tsx
+│   │   │   ├── TemplatePreview.tsx
+│   │   │   ├── FormatOptions.tsx
+│   │   │   └── TemplateValidator.tsx
+│   │   ├── approvals/
+│   │   │   ├── ApprovalQueue.tsx
+│   │   │   ├── BucketApprovalCard.tsx
+│   │   │   ├── BucketDetailsModal.tsx
+│   │   │   └── ApprovalHistory.tsx
+│   │   ├── payments/
+│   │   │   ├── PaymentMethods.tsx
+│   │   │   └── BankingInfo.tsx
+│   │   └── monitoring/
+│   │       ├── DetailedMonitoring.tsx
+│   │       ├── ActiveBuckets.tsx
+│   │       ├── FileHistory.tsx
+│   │       └── ErrorLogs.tsx
+│   ├── services/
+│   │   ├── api.ts
+│   │   ├── payerService.ts
+│   │   ├── bucketingService.ts
+│   │   ├── thresholdService.ts
+│   │   ├── commitCriteriaService.ts
+│   │   ├── fileNamingService.ts
+│   │   ├── approvalService.ts
+│   │   ├── dashboardService.ts
+│   │   └── configService.ts
+│   ├── store/
+│   │   ├── payerSlice.ts
+│   │   ├── bucketingSlice.ts
+│   │   ├── thresholdSlice.ts
+│   │   ├── commitCriteriaSlice.ts
+│   │   ├── fileNamingSlice.ts
+│   │   ├── approvalSlice.ts
+│   │   ├── dashboardSlice.ts
+│   │   └── store.ts
+│   ├── types/
+│   │   ├── Payer.ts
+│   │   ├── BucketingRule.ts
+│   │   ├── Threshold.ts
+│   │   ├── CommitCriteria.ts
+│   │   ├── FileNamingTemplate.ts
+│   │   ├── Approval.ts
+│   │   ├── Dashboard.ts
+│   │   └── Payment.ts
+│   ├── utils/
+│   │   ├── validators.ts
+│   │   └── formatters.ts
+│   ├── App.tsx
+│   └── main.tsx
+├── public/
+├── package.json
+└── tsconfig.json
+```
+
+### Key Dependencies (package.json)
+```json
+{
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.0.0",
+    "@mui/material": "^5.14.0",
+    "@mui/icons-material": "^5.14.0",
+    "react-router-dom": "^6.15.0",
+    "@reduxjs/toolkit": "^1.9.5",
+    "react-redux": "^8.1.2",
+    "axios": "^1.5.0",
+    "@tanstack/react-query": "^4.33.0",
+    "formik": "^2.4.3",
+    "yup": "^1.2.0"
+  }
+}
+```
+
+---
+
+## Integration Architecture
+
+### Communication Flow
+```
+D0 Claim Engine → Cosmos DB (Claims Container)
+                         ↓
+                  Change Feed Stream
+                         ↓
+              Java Change Feed Processor
+                         ↓
+                 Process Claims
+                         ↓
+         ← Config API → Admin Portal (React)
+                         ↓
+              Generate EDI 835
+                         ↓
+              Store & Deliver File
+                         ↓
+                   SFTP/AS2
+```
+
+### Shared Database Schema
+
+#### Azure Cosmos DB
+- **Container**: `claims` - Stores claim documents from D0 engine
+- **Container**: `leases` - Change Feed lease management
+- **Partition Key**: `/payerId` or `/claimId` based on query patterns
+
+#### PostgreSQL (Configuration & Audit)
+
+**Configuration Tables:**
+1. **payers**: Payer configurations (ISA/GS identifiers)
+2. **payees**: Payee/Provider configurations
+3. **edi_bucketing_rules**: Claim aggregation strategies
+   - `rule_name`, `rule_type` (PAYER_PAYEE, BIN_PCN, CUSTOM)
+   - `grouping_expression`, `priority`, `is_active`
+4. **edi_generation_thresholds**: File generation criteria
+   - `threshold_type` (CLAIM_COUNT, AMOUNT, TIME, HYBRID)
+   - `max_claims`, `max_amount`, `time_duration`
+   - `generation_schedule`, `linked_bucketing_rule_id`
+5. **edi_commit_criteria**: Commit/approval configuration
+   - `commit_mode` (AUTO, MANUAL, HYBRID)
+   - `auto_commit_threshold`, `manual_approval_threshold`
+   - `approval_required_roles`, `override_permissions`
+   - `linked_bucketing_rule_id`
+6. **edi_file_naming_templates**: File naming configurations
+   - `template_name`, `template_pattern`
+   - `date_format`, `time_format`, `sequence_padding`
+   - `case_conversion`, `separator_type`
+   - `is_default`, `linked_bucketing_rule_id`
+   - `version`, `created_by`, `created_at`
+7. **file_naming_sequence**: Sequence number tracking
+   - `template_id`, `payer_id`, `current_sequence`
+   - `last_reset_date`, `reset_frequency`
+8. **payment_methods**: Payment configurations
+9. **claim_processing_log**: Audit trail with rejection tracking
+10. **file_generation_history**: Generated files tracking
+    - Enhanced with `generated_file_name` field
+11. **edi_file_buckets**: Active bucket states with status tracking
+    - `bucket_id`, `status` (ACCUMULATING, PENDING_APPROVAL, GENERATING, COMPLETED, FAILED)
+    - `claim_count`, `total_amount`, `rejection_count`, `last_updated`
+    - `awaiting_approval_since`, `approved_by`, `approved_at`
+    - `file_naming_template_id`
+12. **bucket_approval_log**: Approval audit trail
+13. **adjustment_code_mapping**: CARC/RARC mappings
+14. **insurance_plans**: BIN/PCN reference data
+
+### REST API Endpoints (Java Backend for React Portal)
+
+```
+GET    /api/v1/payers
+POST   /api/v1/payers
+PUT    /api/v1/payers/{id}
+DELETE /api/v1/payers/{id}
+
+GET    /api/v1/bucketing-rules
+POST   /api/v1/bucketing-rules
+PUT    /api/v1/bucketing-rules/{id}
+DELETE /api/v1/bucketing-rules/{id}
+
+GET    /api/v1/generation-thresholds
+POST   /api/v1/generation-thresholds
+PUT    /api/v1/generation-thresholds/{id}
+DELETE /api/v1/generation-thresholds/{id}
+
+GET    /api/v1/commit-criteria
+POST   /api/v1/commit-criteria
+PUT    /api/v1/commit-criteria/{id}
+DELETE /api/v1/commit-criteria/{id}
+
+# File Naming Templates
+GET    /api/v1/file-naming-templates
+GET    /api/v1/file-naming-templates/{id}
+POST   /api/v1/file-naming-templates
+PUT    /api/v1/file-naming-templates/{id}
+DELETE /api/v1/file-naming-templates/{id}
+POST   /api/v1/file-naming-templates/{id}/preview    (Preview with sample data)
+GET    /api/v1/file-naming-templates/variables       (List available variables)
+POST   /api/v1/file-naming-templates/validate        (Validate template syntax)
+
+GET    /api/v1/payment-methods
+POST   /api/v1/payment-methods
+
+# File Generation & Approval
+GET    /api/v1/files/buckets/active          (All active accumulations)
+GET    /api/v1/files/buckets/{id}            (Specific bucket details)
+GET    /api/v1/files/buckets/pending-approval (Buckets awaiting approval)
+POST   /api/v1/files/buckets/{id}/approve    (Approve & trigger generation)
+POST   /api/v1/files/buckets/{id}/reject     (Reject bucket)
+POST   /api/v1/files/buckets/{id}/generate   (Force generate)
+GET    /api/v1/files/history
+GET    /api/v1/files/{id}/download
+
+# Operations Dashboard
+GET    /api/v1/dashboard/summary             (Executive summary stats)
+GET    /api/v1/dashboard/active-buckets      (Live bucket states)
+GET    /api/v1/dashboard/rejections          (Rejection analytics)
+GET    /api/v1/dashboard/pending-approvals   (Approval queue)
+
+GET    /api/v1/monitoring/stats
+GET    /api/v1/monitoring/errors
+```
+
+---
+
+## Deployment Considerations
+
+### Java Service
+- Package as Spring Boot JAR
+- Deploy to Azure App Service / AKS (Azure Kubernetes Service)
+- Configure Cosmos DB connection with proper throughput (RU/s)
+- Set up PostgreSQL connection pool for config data
+- Configure Change Feed processor with appropriate lease settings
+- Enable health checks & metrics (Azure Monitor)
+- Set up appropriate retry policies for transient failures
+
+### React Portal
+- Build with `npm run build`
+- Deploy to Nginx/Apache
+- Serve static files
+- Configure reverse proxy to Java API
+- Enable HTTPS
+
+### Security
+- Authentication handled by ecosystem (external auth provider)
+- Role-based access control (RBAC) via headers/tokens from auth provider
+- API rate limiting
+- Audit logging
+- Encrypted database fields for sensitive data (banking info, account numbers)
+- HTTPS/TLS for all communications
+
+---
+
+## Next Steps
+
+1. ✅ Set up project repositories (Ready to implement)
+2. Create database schemas and migrations
+3. Implement core Java services
+4. Build React components
+5. Integration testing
+6. UAT with sample 835 files
+7. Production deployment
+
+**Note**: CI/CD pipelines and authentication are handled by the existing ecosystem infrastructure.
+
+Would you like me to generate starter code for any specific component?
