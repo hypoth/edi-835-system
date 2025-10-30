@@ -1,0 +1,126 @@
+spring:
+  application:
+    name: edi835-processor-sqlite
+
+  # SQLite Configuration (for local development/testing)
+  datasource:
+    url: jdbc:sqlite:${SQLITE_DB_PATH:./data/edi835-local.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1  # SQLite doesn't support multiple connections well
+      connection-timeout: 30000
+      auto-commit: true
+
+  # SQL initialization
+  # NOTE: Schema is pre-initialized using sqlite3 command line tool
+  # Run these commands before starting the application:
+  #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/schema.sql
+  #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/admin-schema.sql
+  #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/sample-data.sql
+  sql:
+    init:
+      mode: never  # Schema initialized manually via sqlite3 CLI to properly handle triggers
+      platform: sqlite
+
+  jpa:
+    hibernate:
+      ddl-auto: none  # Schema managed by init script, not Hibernate
+    show-sql: false  # Reduce log noise
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+        # SQLite-specific settings to avoid metadata issues
+        temp:
+          use_jdbc_metadata_defaults: false
+        globally_quoted_identifiers: true
+        # Completely disable schema validation and management
+        hbm2ddl:
+          auto: none
+        boot:
+          allow_jdbc_metadata_access: false
+        id:
+          new_generator_mappings: false
+        # Configure UUID to use CHAR/VARCHAR mapping for SQLite compatibility
+        # SQLite stores UUIDs as TEXT, not binary
+        type:
+          preferred_uuid_jdbc_type: CHAR
+
+# SQLite Change Feed Configuration (Version-Based)
+changefeed:
+  type: sqlite  # Options: cosmos, sqlite
+  sqlite:
+    enabled: true
+    poll-interval-ms: 5000
+    batch-size: 100
+    # Auto-increment feed version on each poll
+    auto-version: true
+    # Tables to track changes for
+    tracked-tables:
+      - claims
+      - claim_status_history
+
+  # Disable Cosmos DB change feed for SQLite profile
+  cosmos:
+    enabled: false
+
+# EDI Configuration (same as main)
+edi:
+  output-directory: ${EDI_OUTPUT_DIR:./data/edi/output}
+  temp-directory: ${EDI_TEMP_DIR:./data/edi/temp}
+  schema-directory: classpath:edi-schemas/
+  # default-schema: X12_005010_835.xml  # Schema validation disabled (optional)
+  default-schema: ${EDI_SCHEMA:}  # Empty = disabled, specify filename to enable
+
+# File Delivery Configuration (same as main, but disabled by default for local)
+file-delivery:
+  sftp:
+    enabled: true
+    host: ${SFTP_HOST:localhost}
+    port: ${SFTP_PORT:22}
+    username: ${SFTP_USERNAME:testuser}
+    password: ${SFTP_PASSWORD:testpass}
+    remote-directory: ${SFTP_REMOTE_DIR:/edi/835}
+    connection-timeout-ms: 30000
+    session-timeout-ms: 300000
+  scheduler:
+    enabled: ${SFTP_SCHEDULER_ENABLED:true}
+    cron: ${SFTP_DELIVERY_CRON:0 */5 * * * ?}  # Every 5 minutes
+    batch-size: 10
+
+  retry:
+    max-attempts: 3
+    backoff-ms: 5000
+
+# Monitoring and Management
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# Logging (more verbose for local dev)
+logging:
+  level:
+    com.healthcare.edi835: DEBUG
+    io.xlate.edi: INFO
+    org.hibernate.SQL: INFO
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Server Configuration
+server:
+  port: ${SERVER_PORT:8080}
+  # servlet:
+  #   context-path: /api/v1  # Removed - controllers already include /api/v1 in their mappings
+  error:
+    include-message: always
+    include-stacktrace: on_param

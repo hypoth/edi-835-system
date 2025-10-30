@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schema xmlns="http://xlate.io/EDISchema/v4">
+  <interchange header="ISA" trailer="IEA">
+    <sequence>
+      <segment type="ISA" minOccurs="1" maxOccurs="1"/>
+      <group header="GS" trailer="GE">
+        <sequence>
+          <segment type="GS" minOccurs="1" maxOccurs="1"/>
+          <transaction header="ST" trailer="SE">
+            <sequence>
+              <segment type="ST" minOccurs="1" maxOccurs="1"/>
+
+              <!-- Table 1 - Header -->
+              <segment type="BPR" minOccurs="1" maxOccurs="1"/>
+              <segment type="TRN" minOccurs="1" maxOccurs="1"/>
+              <segment type="CUR" minOccurs="0" maxOccurs="1"/>
+              <segment type="REF" minOccurs="0" maxOccurs="unbounded"/>
+              <segment type="DTM" minOccurs="0" maxOccurs="1"/>
+
+              <!-- Loop 1000A - Payer Identification -->
+              <loop code="1000A" minOccurs="1" maxOccurs="1">
+                <sequence>
+                  <segment type="N1" minOccurs="1" maxOccurs="1"/>
+                  <segment type="N3" minOccurs="1" maxOccurs="1"/>
+                  <segment type="N4" minOccurs="1" maxOccurs="1"/>
+                  <segment type="REF" minOccurs="0" maxOccurs="unbounded"/>
+                  <segment type="PER" minOccurs="0" maxOccurs="unbounded"/>
+                </sequence>
+              </loop>
+
+              <!-- Loop 1000B - Payee Identification -->
+              <loop code="1000B" minOccurs="1" maxOccurs="1">
+                <sequence>
+                  <segment type="N1" minOccurs="1" maxOccurs="1"/>
+                  <segment type="N3" minOccurs="0" maxOccurs="1"/>
+                  <segment type="N4" minOccurs="0" maxOccurs="1"/>
+                  <segment type="REF" minOccurs="0" maxOccurs="unbounded"/>
+                  <segment type="RDM" minOccurs="0" maxOccurs="1"/>
+                </sequence>
+              </loop>
+
+              <!-- Loop 2000 - Claim Payment Information -->
+              <loop code="2000" minOccurs="0" maxOccurs="unbounded">
+                <sequence>
+                  <segment type="LX" minOccurs="1" maxOccurs="1"/>
+                  <segment type="TS3" minOccurs="0" maxOccurs="1"/>
+                  <segment type="TS2" minOccurs="0" maxOccurs="1"/>
+
+                  <!-- Loop 2100 - Claim Payment Information -->
+                  <loop code="2100" minOccurs="1" maxOccurs="unbounded">
+                    <sequence>
+                      <segment type="CLP" minOccurs="1" maxOccurs="1"/>
+                      <segment type="CAS" minOccurs="0" maxOccurs="99"/>
+                      <segment type="NM1" minOccurs="1" maxOccurs="1"/>
+                      <segment type="MIA" minOccurs="0" maxOccurs="1"/>
+                      <segment type="MOA" minOccurs="0" maxOccurs="1"/>
+                      <segment type="REF" minOccurs="0" maxOccurs="unbounded"/>
+                      <segment type="DTM" minOccurs="0" maxOccurs="unbounded"/>
+                      <segment type="PER" minOccurs="0" maxOccurs="unbounded"/>
+                      <segment type="AMT" minOccurs="0" maxOccurs="unbounded"/>
+                      <segment type="QTY" minOccurs="0" maxOccurs="unbounded"/>
+
+                      <!-- Loop 2110 - Service Payment Information -->
+                      <loop code="2110" minOccurs="0" maxOccurs="999">
+                        <sequence>
+                          <segment type="SVC" minOccurs="1" maxOccurs="1"/>
+                          <segment type="DTM" minOccurs="0" maxOccurs="unbounded"/>
+                          <segment type="CAS" minOccurs="0" maxOccurs="99"/>
+                          <segment type="REF" minOccurs="0" maxOccurs="unbounded"/>
+                          <segment type="AMT" minOccurs="0" maxOccurs="unbounded"/>
+                          <segment type="QTY" minOccurs="0" maxOccurs="unbounded"/>
+                          <segment type="LQ" minOccurs="0" maxOccurs="unbounded"/>
+                        </sequence>
+                      </loop>
+                    </sequence>
+                  </loop>
+                </sequence>
+              </loop>
+
+              <!-- PLB segment - Provider Level Adjustment -->
+              <segment type="PLB" minOccurs="0" maxOccurs="unbounded"/>
+
+              <segment type="SE" minOccurs="1" maxOccurs="1"/>
+            </sequence>
+          </transaction>
+          <segment type="GE" minOccurs="1" maxOccurs="1"/>
+        </sequence>
+      </group>
+      <segment type="IEA" minOccurs="1" maxOccurs="1"/>
+    </sequence>
+  </interchange>
+</schema>

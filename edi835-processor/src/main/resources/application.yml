@@ -1,7 +1,12 @@
 spring:
   application:
     name: edi835-processor
-  
+
+  # Active profile: sqlite (default for local dev), postgres, cosmos
+  profiles:
+    active: ${SPRING_PROFILE:sqlite}
+
+  # PostgreSQL Configuration
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:edi835config}
     username: ${DB_USERNAME:postgres}
@@ -10,6 +15,9 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
   
   jpa:
     hibernate:
@@ -18,43 +26,117 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
   
+  # Azure Cosmos DB Configuration
   cloud:
     azure:
       cosmos:
         endpoint: ${COSMOS_ENDPOINT:https://your-account.documents.azure.com:443/}
         key: ${COSMOS_KEY:your-cosmos-key}
         database: ${COSMOS_DATABASE:claims}
+        consistency-level: SESSION
 
-cosmos:
-  changefeed:
-    container: claims
-    lease-container: leases
+# Change Feed Configuration
+changefeed:
+  # Type of change feed: cosmos, sqlite
+  type: ${CHANGEFEED_TYPE:sqlite}
+
+  # Cosmos DB Change Feed Configuration
+  cosmos:
+    enabled: ${COSMOS_CHANGEFEED_ENABLED:false}
+    container: ${COSMOS_FEED_CONTAINER:claims}
+    lease-container: ${COSMOS_LEASE_CONTAINER:leases}
     host-name: ${HOSTNAME:edi835-processor}
     max-items-count: 100
     poll-interval-ms: 5000
 
+  # SQLite Change Feed Configuration (Version-Based)
+  sqlite:
+    enabled: ${SQLITE_CHANGEFEED_ENABLED:true}
+    poll-interval-ms: 5000
+    batch-size: 100
+    auto-version: true
+
+# EDI Configuration
 edi:
   output-directory: ${EDI_OUTPUT_DIR:/data/edi/output}
   temp-directory: ${EDI_TEMP_DIR:/data/edi/temp}
   schema-directory: classpath:edi-schemas/
-  default-schema: X12_005010_835.xml
+  # default-schema: X12_005010_835.xml  # Schema validation disabled (optional)
+  default-schema: ${EDI_SCHEMA:}  # Empty = disabled, specify filename to enable
 
+# Encryption Configuration (for sensitive data like SFTP passwords)
+encryption:
+  # IMPORTANT: Set these via environment variables in production!
+  # Key must be at least 8 characters
+  # Salt must be a hexadecimal string (16 hex digits = 8 bytes)
+  key: ${ENCRYPTION_KEY:changeme-encryption-key}
+  salt: ${ENCRYPTION_SALT:deadbeefdeadbeef}
+
+# File Delivery Configuration
+file-delivery:
+  sftp:
+    enabled: ${SFTP_ENABLED:false}
+    host: ${SFTP_HOST:}
+    port: ${SFTP_PORT:22}
+    username: ${SFTP_USERNAME:}
+    password: ${SFTP_PASSWORD:}
+    remote-directory: ${SFTP_REMOTE_DIR:/edi/835}
+
+    # Connection settings
+    connection-timeout-ms: 30000  # 30 seconds
+    session-timeout-ms: 300000    # 5 minutes
+
+  retry:
+    max-attempts: 3
+    backoff-ms: 5000  # Base delay for exponential backoff
+
+  scheduler:
+    enabled: ${SFTP_SCHEDULER_ENABLED:true}
+    cron: ${SFTP_DELIVERY_CRON:0 */5 * * * ?}  # Every 5 minutes
+    batch-size: 10  # Max files to deliver per run
+
+# Monitoring and Management
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
 
+# Logging
 logging:
   level:
     com.healthcare.edi835: DEBUG
     io.xlate.edi: INFO
+    org.springframework.data.cosmos: INFO
+    org.hibernate.SQL: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/edi835-processor.log
+    max-size: 10MB
+    max-history: 30
 
+# Server Configuration
 server:
   port: ${SERVER_PORT:8080}
-  servlet:
-    context-path: /api/v1
+  # servlet:
+  #   context-path: /api/v1  # Removed - controllers already include /api/v1 in their mappings
+  compression:
+    enabled: true
+  error:
+    include-message: always
+    include-stacktrace: on_param

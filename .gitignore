@@ -1,14 +1,53 @@
+# OS files
 .DS_Store
 Thumbs.db
+
+# IDE
 .idea/
 .vscode/
 *.iml
+*.swp
+*.swo
+
+# Logs
 logs/
 *.log
+
+# Environment variables
 .env
 .env.local
+.env.*.local
+
+# Backend (Java/Maven)
 target/
+*.class
+*.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Frontend (React/Vite)
 dist/
 build/
 node_modules/
+.vite/
+coverage/
+*.local
+
+# Output directories
 edi-output/
+output/
+
+# Test reports
+test-results/
+junit/
+
+# Database
+*.db
+*.sqlite
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+TBD.txt

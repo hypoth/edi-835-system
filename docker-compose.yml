@@ -1,13 +1,15 @@
+# Docker Compose for EDI 835 Remittance Processing System
 version: '3.8'
 
 services:
+  # PostgreSQL Database for configuration and audit data
   postgres:
-    image: postgres:14-alpine
+    image: postgres:15-alpine
     container_name: edi835-postgres
     environment:
-      POSTGRES_DB: edi835config
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: edi835db
+      POSTGRES_USER: edi835user
+      POSTGRES_PASSWORD: edi835pass
     ports:
       - "5432:5432"
     volumes:
@@ -15,41 +17,116 @@ services:
       - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     networks:
       - edi835-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edi835user -d edi835db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  backend:
-    build: ./edi835-processor
-    container_name: edi835-backend
+  # Azure Cosmos DB Emulator (optional - for local development)
+  # Uncomment if you want to run Cosmos DB locally
+  # cosmosdb:
+  #   image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+  #   container_name: edi835-cosmosdb
+  #   environment:
+  #     AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 10
+  #     AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "true"
+  #   ports:
+  #     - "8081:8081"
+  #     - "10251:10251"
+  #     - "10252:10252"
+  #     - "10253:10253"
+  #     - "10254:10254"
+  #   volumes:
+  #     - cosmosdb_data:/tmp/cosmos
+  #   networks:
+  #     - edi835-network
+
+  # EDI 835 Processor (Backend Spring Boot Application)
+  edi835-processor:
+    build:
+      context: ./edi835-processor
+      dockerfile: Dockerfile
+    container_name: edi835-processor
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: edi835config
-      DB_USERNAME: postgres
-      DB_PASSWORD: postgres
-      COSMOS_ENDPOINT: ${COSMOS_ENDPOINT}
-      COSMOS_KEY: ${COSMOS_KEY}
-      COSMOS_DATABASE: claims
+      # Spring Boot Configuration
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8080
+
+      # PostgreSQL Configuration
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/edi835db
+      SPRING_DATASOURCE_USERNAME: edi835user
+      SPRING_DATASOURCE_PASSWORD: edi835pass
+
+      # Azure Cosmos DB Configuration (update with your values)
+      AZURE_COSMOS_ENDPOINT: ${AZURE_COSMOS_ENDPOINT}
+      AZURE_COSMOS_KEY: ${AZURE_COSMOS_KEY}
+      AZURE_COSMOS_DATABASE: ${AZURE_COSMOS_DATABASE}
+      AZURE_COSMOS_CONTAINER: ${AZURE_COSMOS_CONTAINER}
+
+      # Logging
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_HEALTHCARE: DEBUG
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - edi835-network
     volumes:
-      - ./edi-output:/data/edi/output
+      - ./edi835-processor/logs:/app/logs
+      - ./edi835-processor/output:/app/output
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
 
-  frontend:
-    build: ./edi835-admin-portal
-    container_name: edi835-frontend
+  # EDI 835 Admin Portal (Frontend React Application)
+  edi835-admin-portal:
+    build:
+      context: ./edi835-admin-portal
+      dockerfile: Dockerfile
+    container_name: edi835-admin-portal
+    environment:
+      # API Configuration
+      VITE_API_BASE_URL: http://localhost:8080/api
     ports:
-      - "80:80"
+      - "3000:80"
     depends_on:
-      - backend
+      - edi835-processor
     networks:
       - edi835-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
-volumes:
-  postgres_data:
+  # SFTP Server (optional - for testing file delivery)
+  sftp-server:
+    image: atmoz/sftp:latest
+    container_name: edi835-sftp
+    ports:
+      - "2222:22"
+    volumes:
+      - sftp_data:/home/edi835user/upload
+    command: edi835user:edi835pass:1001:100:upload
+    networks:
+      - edi835-network
 
 networks:
   edi835-network:
     driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  # cosmosdb_data:
+  #   driver: local
+  sftp_data:
+    driver: local
