@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              http://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+    <!--
+    Maven Settings for EDI 835 Processor
+
+    This file configures Maven to download dependencies from multiple repositories.
+
+    Usage:
+      mvn clean install -s settings.xml
+      mvn spring-boot:run -s settings.xml
+
+    Or configure in .mvn/maven.config:
+      -s ./settings.xml
+    -->
+
+    <!-- Local Repository Location (optional - defaults to ~/.m2/repository) -->
+    <localRepository>${user.home}/.m2/repository</localRepository>
+
+    <!-- Offline Mode (set to true to use only local cache) -->
+    <offline>false</offline>
+
+    <!-- Mirrors (optional - use for corporate proxies or artifactory) -->
+    <!--
+    <mirrors>
+        <mirror>
+            <id>corporate-artifactory</id>
+            <name>Corporate Artifactory Mirror</name>
+            <url>https://artifactory.company.com/artifactory/maven-public</url>
+            <mirrorOf>*</mirrorOf>
+        </mirror>
+    </mirrors>
+    -->
+
+    <!-- Servers (for repositories requiring authentication) -->
+    <servers>
+        <!--
+        <server>
+            <id>corporate-artifactory</id>
+            <username>${env.ARTIFACTORY_USER}</username>
+            <password>${env.ARTIFACTORY_PASSWORD}</password>
+        </server>
+        -->
+
+        <!-- Azure Artifacts (if using private Azure DevOps Maven feed) -->
+        <!--
+        <server>
+            <id>azure-artifacts</id>
+            <username>azure</username>
+            <password>${env.AZURE_ARTIFACTS_TOKEN}</password>
+        </server>
+        -->
+    </servers>
+
+    <!-- Profiles -->
+    <profiles>
+        <!-- Default profile with public repositories -->
+        <profile>
+            <id>default-repos</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+
+            <repositories>
+                <!-- Maven Central (primary repository) -->
+                <repository>
+                    <id>central</id>
+                    <name>Maven Central Repository</name>
+                    <url>https://repo.maven.apache.org/maven2</url>
+                    <releases>
+                        <enabled>true</enabled>
+                        <updatePolicy>daily</updatePolicy>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+
+                <!-- Sonatype OSS Releases (for some Azure and third-party libs) -->
+                <repository>
+                    <id>sonatype-releases</id>
+                    <name>Sonatype OSS Releases</name>
+                    <url>https://oss.sonatype.org/content/repositories/releases</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+
+                <!-- Sonatype OSS Snapshots (for snapshot dependencies) -->
+                <repository>
+                    <id>sonatype-snapshots</id>
+                    <name>Sonatype OSS Snapshots</name>
+                    <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+                    <releases>
+                        <enabled>false</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                        <updatePolicy>always</updatePolicy>
+                    </snapshots>
+                </repository>
+
+                <!-- Spring Milestones (for Spring milestone builds) -->
+                <repository>
+                    <id>spring-milestones</id>
+                    <name>Spring Milestones</name>
+                    <url>https://repo.spring.io/milestone</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+
+                <!-- Spring Snapshots (for Spring snapshot builds) -->
+                <repository>
+                    <id>spring-snapshots</id>
+                    <name>Spring Snapshots</name>
+                    <url>https://repo.spring.io/snapshot</url>
+                    <releases>
+                        <enabled>false</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                        <updatePolicy>always</updatePolicy>
+                    </snapshots>
+                </repository>
+
+                <!-- JCenter (legacy, but still used by some libraries) -->
+                <!-- Note: JCenter is read-only as of 2021, but kept for compatibility -->
+                <repository>
+                    <id>jcenter</id>
+                    <name>JCenter Repository</name>
+                    <url>https://jcenter.bintray.com</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+
+            <pluginRepositories>
+                <!-- Maven Central for plugins -->
+                <pluginRepository>
+                    <id>central</id>
+                    <name>Maven Central Repository</name>
+                    <url>https://repo.maven.apache.org/maven2</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </pluginRepository>
+
+                <!-- Spring Plugin Releases -->
+                <pluginRepository>
+                    <id>spring-milestones</id>
+                    <name>Spring Milestones</name>
+                    <url>https://repo.spring.io/milestone</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+
+        <!-- Corporate Artifactory Profile (activate when using corporate proxy) -->
+        <!--
+        <profile>
+            <id>corporate-artifactory</id>
+            <repositories>
+                <repository>
+                    <id>corporate-artifactory-releases</id>
+                    <name>Corporate Artifactory Releases</name>
+                    <url>https://artifactory.company.com/artifactory/libs-release</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+                <repository>
+                    <id>corporate-artifactory-snapshots</id>
+                    <name>Corporate Artifactory Snapshots</name>
+                    <url>https://artifactory.company.com/artifactory/libs-snapshot</url>
+                    <releases><enabled>false</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>corporate-artifactory-plugins</id>
+                    <name>Corporate Artifactory Plugins</name>
+                    <url>https://artifactory.company.com/artifactory/plugins-release</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+        -->
+
+        <!-- Azure Artifacts Profile (for Azure DevOps Maven feeds) -->
+        <!--
+        <profile>
+            <id>azure-artifacts</id>
+            <repositories>
+                <repository>
+                    <id>azure-artifacts-feed</id>
+                    <url>https://pkgs.dev.azure.com/your-org/_packaging/your-feed/maven/v1</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>true</enabled></snapshots>
+                </repository>
+            </repositories>
+        </profile>
+        -->
+    </profiles>
+
+    <!-- Active Profiles (uncomment to activate specific profiles) -->
+    <activeProfiles>
+        <activeProfile>default-repos</activeProfile>
+        <!-- <activeProfile>corporate-artifactory</activeProfile> -->
+        <!-- <activeProfile>azure-artifacts</activeProfile> -->
+    </activeProfiles>
+
+    <!-- Proxies (if behind corporate firewall) -->
+    <!--
+    <proxies>
+        <proxy>
+            <id>corporate-proxy</id>
+            <active>true</active>
+            <protocol>http</protocol>
+            <host>proxy.company.com</host>
+            <port>8080</port>
+            <username>proxyuser</username>
+            <password>proxypass</password>
+            <nonProxyHosts>localhost|127.0.0.1|*.company.com</nonProxyHosts>
+        </proxy>
+    </proxies>
+    -->
+
+</settings>
