@@ -1,10 +1,19 @@
 package com.healthcare.edi835.controller;
 
 import com.healthcare.edi835.entity.EdiFileBucket;
+import com.healthcare.edi835.entity.Payer;
+import com.healthcare.edi835.entity.Payee;
+import com.healthcare.edi835.model.dto.BucketConfigurationCheckDTO;
 import com.healthcare.edi835.model.dto.BucketSummaryDTO;
+import com.healthcare.edi835.model.dto.CreatePayerFromBucketDTO;
+import com.healthcare.edi835.model.dto.CreatePayeeFromBucketDTO;
 import com.healthcare.edi835.repository.EdiFileBucketRepository;
+import com.healthcare.edi835.repository.PayerRepository;
+import com.healthcare.edi835.repository.PayeeRepository;
 import com.healthcare.edi835.service.BucketManagerService;
+import com.healthcare.edi835.service.EncryptionService;
 import com.healthcare.edi835.service.ThresholdMonitorService;
+import com.healthcare.edi835.util.EdiIdentifierNormalizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,14 +38,23 @@ public class BucketController {
     private final EdiFileBucketRepository bucketRepository;
     private final BucketManagerService bucketManagerService;
     private final ThresholdMonitorService thresholdMonitorService;
+    private final PayerRepository payerRepository;
+    private final PayeeRepository payeeRepository;
+    private final EncryptionService encryptionService;
 
     public BucketController(
             EdiFileBucketRepository bucketRepository,
             BucketManagerService bucketManagerService,
-            ThresholdMonitorService thresholdMonitorService) {
+            ThresholdMonitorService thresholdMonitorService,
+            PayerRepository payerRepository,
+            PayeeRepository payeeRepository,
+            EncryptionService encryptionService) {
         this.bucketRepository = bucketRepository;
         this.bucketManagerService = bucketManagerService;
         this.thresholdMonitorService = thresholdMonitorService;
+        this.payerRepository = payerRepository;
+        this.payeeRepository = payeeRepository;
+        this.encryptionService = encryptionService;
     }
 
     // ==================== Bucket Retrieval ====================
@@ -329,5 +347,274 @@ public class BucketController {
                     return ResponseEntity.ok(details);
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    // ==================== Configuration Management ====================
+
+    /**
+     * Check bucket configuration status (missing payer/payee).
+     *
+     * GET /api/v1/buckets/{bucketId}/configuration-check
+     */
+    @GetMapping("/{bucketId}/configuration-check")
+    public ResponseEntity<BucketConfigurationCheckDTO> checkBucketConfiguration(@PathVariable UUID bucketId) {
+        log.debug("GET /api/v1/buckets/{}/configuration-check", bucketId);
+
+        return bucketRepository.findById(bucketId)
+                .map(bucket -> {
+                    boolean payerExists = payerRepository.findByPayerId(bucket.getPayerId()).isPresent();
+                    boolean payeeExists = payeeRepository.findByPayeeId(bucket.getPayeeId()).isPresent();
+                    boolean hasAllConfiguration = payerExists && payeeExists;
+
+                    String actionRequired;
+                    if (!payerExists && !payeeExists) {
+                        actionRequired = "CREATE_BOTH";
+                    } else if (!payerExists) {
+                        actionRequired = "CREATE_PAYER";
+                    } else if (!payeeExists) {
+                        actionRequired = "CREATE_PAYEE";
+                    } else {
+                        actionRequired = "NONE";
+                    }
+
+                    // Normalize IDs/names to ensure they conform to EDI validation rules
+                    String normalizedPayerId = !payerExists ?
+                            EdiIdentifierNormalizer.normalizePayerId(bucket.getPayerId()) : null;
+                    String normalizedPayeeId = !payeeExists ?
+                            EdiIdentifierNormalizer.normalizePayeeId(bucket.getPayeeId()) : null;
+
+                    BucketConfigurationCheckDTO check = BucketConfigurationCheckDTO.builder()
+                            .bucketId(bucketId.toString())
+                            .hasAllConfiguration(hasAllConfiguration)
+                            .payerExists(payerExists)
+                            .payeeExists(payeeExists)
+                            .missingPayerId(normalizedPayerId)
+                            .missingPayerName(!payerExists ? bucket.getPayerName() : null)
+                            .missingPayeeId(normalizedPayeeId)
+                            .missingPayeeName(!payeeExists ? bucket.getPayeeName() : null)
+                            .actionRequired(actionRequired)
+                            .build();
+
+                    return ResponseEntity.ok(check);
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Create payer from bucket information.
+     *
+     * POST /api/v1/buckets/{bucketId}/create-payer
+     */
+    @PostMapping("/{bucketId}/create-payer")
+    public ResponseEntity<?> createPayerFromBucket(
+            @PathVariable UUID bucketId,
+            @RequestBody CreatePayerFromBucketDTO request) {
+        log.info("POST /api/v1/buckets/{}/create-payer", bucketId);
+
+        try {
+            // Validate bucket exists
+            EdiFileBucket bucket = bucketRepository.findById(bucketId)
+                    .orElseThrow(() -> new IllegalArgumentException("Bucket not found: " + bucketId));
+
+            // IMPORTANT: Normalize payer ID to conform to EDI validation rules
+            String originalPayerId = request.getPayerId();
+            String normalizedPayerId = EdiIdentifierNormalizer.normalizePayerId(originalPayerId);
+
+            log.info("Normalizing payer ID: '{}' -> '{}'", originalPayerId, normalizedPayerId);
+
+            // Check if payer already exists (check both original and normalized)
+            if (payerRepository.findByPayerId(normalizedPayerId).isPresent() ||
+                payerRepository.findByPayerId(originalPayerId).isPresent()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Payer already exists: " + normalizedPayerId));
+            }
+
+            // Auto-generate ISA Sender ID if not provided or invalid
+            String isaSenderId = request.getIsaSenderId();
+            if (isaSenderId == null || isaSenderId.isEmpty() ||
+                !EdiIdentifierNormalizer.isValidIsaSenderId(isaSenderId)) {
+                isaSenderId = EdiIdentifierNormalizer.generateIsaSenderId(normalizedPayerId);
+                log.info("Auto-generated ISA Sender ID: '{}'", isaSenderId);
+            } else {
+                // Normalize provided ISA Sender ID
+                String normalizedIsaSenderId = isaSenderId.toUpperCase().replaceAll("[^A-Z0-9]", "");
+                if (normalizedIsaSenderId.length() > 15) {
+                    normalizedIsaSenderId = normalizedIsaSenderId.substring(0, 15);
+                }
+                isaSenderId = normalizedIsaSenderId;
+                log.info("Normalized provided ISA Sender ID: '{}' -> '{}'", request.getIsaSenderId(), isaSenderId);
+            }
+
+            // Auto-generate GS Application Sender ID if not provided or invalid
+            String gsApplicationSenderId = request.getGsApplicationSenderId();
+            if (gsApplicationSenderId == null || gsApplicationSenderId.isEmpty() ||
+                !EdiIdentifierNormalizer.isValidIsaSenderId(gsApplicationSenderId)) {
+                gsApplicationSenderId = EdiIdentifierNormalizer.generateGsApplicationSenderId(normalizedPayerId);
+                log.info("Auto-generated GS Application Sender ID: '{}'", gsApplicationSenderId);
+            } else {
+                // Normalize provided GS Application Sender ID
+                String normalizedGsSenderId = gsApplicationSenderId.toUpperCase().replaceAll("[^A-Z0-9]", "");
+                if (normalizedGsSenderId.length() > 15) {
+                    normalizedGsSenderId = normalizedGsSenderId.substring(0, 15);
+                }
+                gsApplicationSenderId = normalizedGsSenderId;
+            }
+
+            // Set default ISA Qualifier if not provided
+            String isaQualifier = request.getIsaQualifier();
+            if (isaQualifier == null || isaQualifier.isEmpty()) {
+                isaQualifier = "ZZ";
+            }
+
+            // Encrypt SFTP password if provided
+            String encryptedPassword = null;
+            if (request.getSftpPassword() != null && !request.getSftpPassword().isEmpty()) {
+                encryptedPassword = encryptionService.encrypt(request.getSftpPassword());
+                log.debug("SFTP password encrypted for payer: {}", normalizedPayerId);
+            }
+
+            // Create payer entity with normalized values
+            Payer payer = new Payer();
+            payer.setPayerId(normalizedPayerId);  // Use normalized ID
+            payer.setPayerName(request.getPayerName());
+            payer.setIsaQualifier(isaQualifier);
+            payer.setIsaSenderId(isaSenderId);  // Use generated/normalized ISA Sender ID
+            payer.setGsApplicationSenderId(gsApplicationSenderId);  // Use generated/normalized GS ID
+            payer.setAddressStreet(request.getAddressStreet());
+            payer.setAddressCity(request.getAddressCity());
+            payer.setAddressState(request.getAddressState());
+            payer.setAddressZip(request.getAddressZip());
+            payer.setSftpHost(request.getSftpHost());
+            payer.setSftpPort(request.getSftpPort());
+            payer.setSftpUsername(request.getSftpUsername());
+            payer.setSftpPassword(encryptedPassword);  // Use encrypted password
+            payer.setSftpPath(request.getSftpPath());
+            payer.setRequiresSpecialHandling(request.getRequiresSpecialHandling());
+            payer.setIsActive(request.getIsActive());
+            payer.setCreatedBy(request.getCreatedBy() != null ? request.getCreatedBy() : "SYSTEM_AUTO");
+
+            Payer savedPayer = payerRepository.save(payer);
+
+            log.info("Payer created successfully for bucket {}: ID='{}', ISA Sender ID='{}'",
+                    bucketId, savedPayer.getPayerId(), savedPayer.getIsaSenderId());
+
+            // Update bucket's payer ID to normalized version
+            if (!normalizedPayerId.equals(bucket.getPayerId())) {
+                bucket.setPayerId(normalizedPayerId);
+                bucketRepository.save(bucket);
+                log.info("Updated bucket {} payer ID to normalized version: '{}'", bucketId, normalizedPayerId);
+            }
+
+            // If bucket is in MISSING_CONFIGURATION status, check if we can now generate
+            if (bucket.getStatus() == EdiFileBucket.BucketStatus.MISSING_CONFIGURATION) {
+                boolean payeeExists = payeeRepository.findByPayeeId(bucket.getPayeeId()).isPresent();
+                if (payeeExists) {
+                    // Both payer and payee now exist, transition back to PENDING_APPROVAL
+                    bucket.markPendingApproval();
+                    bucketRepository.save(bucket);
+                    log.info("Bucket {} transitioned back to PENDING_APPROVAL", bucketId);
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "message", "Payer created successfully",
+                    "payer", savedPayer,
+                    "normalizations", Map.of(
+                            "originalPayerId", originalPayerId,
+                            "normalizedPayerId", normalizedPayerId,
+                            "isaSenderId", isaSenderId,
+                            "gsApplicationSenderId", gsApplicationSenderId
+                    )
+            ));
+
+        } catch (Exception e) {
+            log.error("Failed to create payer from bucket {}", bucketId, e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to create payer: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Create payee from bucket information.
+     *
+     * POST /api/v1/buckets/{bucketId}/create-payee
+     */
+    @PostMapping("/{bucketId}/create-payee")
+    public ResponseEntity<?> createPayeeFromBucket(
+            @PathVariable UUID bucketId,
+            @RequestBody CreatePayeeFromBucketDTO request) {
+        log.info("POST /api/v1/buckets/{}/create-payee", bucketId);
+
+        try {
+            // Validate bucket exists
+            EdiFileBucket bucket = bucketRepository.findById(bucketId)
+                    .orElseThrow(() -> new IllegalArgumentException("Bucket not found: " + bucketId));
+
+            // IMPORTANT: Normalize payee ID to conform to EDI validation rules
+            String originalPayeeId = request.getPayeeId();
+            String normalizedPayeeId = EdiIdentifierNormalizer.normalizePayeeId(originalPayeeId);
+
+            log.info("Normalizing payee ID: '{}' -> '{}'", originalPayeeId, normalizedPayeeId);
+
+            // Check if payee already exists (check both original and normalized)
+            if (payeeRepository.findByPayeeId(normalizedPayeeId).isPresent() ||
+                payeeRepository.findByPayeeId(originalPayeeId).isPresent()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Payee already exists: " + normalizedPayeeId));
+            }
+
+            // Create payee entity with normalized values
+            Payee payee = new Payee();
+            payee.setPayeeId(normalizedPayeeId);  // Use normalized ID
+            payee.setPayeeName(request.getPayeeName());
+            payee.setNpi(request.getNpi());
+            payee.setTaxId(request.getTaxId());
+            payee.setAddressStreet(request.getAddressStreet());
+            payee.setAddressCity(request.getAddressCity());
+            payee.setAddressState(request.getAddressState());
+            payee.setAddressZip(request.getAddressZip());
+            payee.setRequiresSpecialHandling(request.getRequiresSpecialHandling());
+            payee.setIsActive(request.getIsActive());
+            payee.setCreatedBy(request.getCreatedBy() != null ? request.getCreatedBy() : "SYSTEM_AUTO");
+
+            Payee savedPayee = payeeRepository.save(payee);
+
+            log.info("Payee created successfully for bucket {}: ID='{}'", bucketId, savedPayee.getPayeeId());
+
+            // Update bucket's payee ID to normalized version
+            if (!normalizedPayeeId.equals(bucket.getPayeeId())) {
+                bucket.setPayeeId(normalizedPayeeId);
+                bucketRepository.save(bucket);
+                log.info("Updated bucket {} payee ID to normalized version: '{}'", bucketId, normalizedPayeeId);
+            }
+
+            // If bucket is in MISSING_CONFIGURATION status, check if we can now generate
+            if (bucket.getStatus() == EdiFileBucket.BucketStatus.MISSING_CONFIGURATION) {
+                // Check with normalized payer ID
+                String normalizedPayerId = EdiIdentifierNormalizer.normalizePayerId(bucket.getPayerId());
+                boolean payerExists = payerRepository.findByPayerId(normalizedPayerId).isPresent() ||
+                                     payerRepository.findByPayerId(bucket.getPayerId()).isPresent();
+                if (payerExists) {
+                    // Both payer and payee now exist, transition back to PENDING_APPROVAL
+                    bucket.markPendingApproval();
+                    bucketRepository.save(bucket);
+                    log.info("Bucket {} transitioned back to PENDING_APPROVAL", bucketId);
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "message", "Payee created successfully",
+                    "payee", savedPayee,
+                    "normalizations", Map.of(
+                            "originalPayeeId", originalPayeeId,
+                            "normalizedPayeeId", normalizedPayeeId
+                    )
+            ));
+
+        } catch (Exception e) {
+            log.error("Failed to create payee from bucket {}", bucketId, e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to create payee: " + e.getMessage()));
+        }
     }
 }

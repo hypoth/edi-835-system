@@ -62,6 +62,23 @@ changefeed:
     batch-size: 100
     auto-version: true
 
+  # NCPDP Change Feed Configuration (for pharmacy claims)
+  ncpdp:
+    enabled: ${NCPDP_CHANGEFEED_ENABLED:true}
+    poll-interval-ms: ${NCPDP_POLL_INTERVAL:5000}
+    batch-size: ${NCPDP_BATCH_SIZE:50}
+    max-retries: 3
+    stuck-threshold-minutes: 30  # Reset claims stuck in PROCESSING for > 30 min
+
+# NCPDP Configuration
+ncpdp:
+  ingestion:
+    default-file-path: d0-samples/ncpdp_rx_claims.txt
+    auto-process: true  # Automatically process when inserted
+  parser:
+    strict-validation: false  # Allow parsing with missing optional fields
+    skip-invalid-segments: true  # Skip unknown segments instead of failing
+
 # EDI Configuration
 edi:
   output-directory: ${EDI_OUTPUT_DIR:/data/edi/output}

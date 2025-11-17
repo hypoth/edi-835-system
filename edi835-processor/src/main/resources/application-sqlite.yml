@@ -17,6 +17,7 @@ spring:
   #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/schema.sql
   #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/admin-schema.sql
   #   sqlite3 ./data/edi835-local.db < src/main/resources/db/sqlite/sample-data.sql
+  # The admin-schema.sql now includes NCPDP tables (ncpdp_raw_claims, ncpdp_processing_log)
   sql:
     init:
       mode: never  # Schema initialized manually via sqlite3 CLI to properly handle triggers

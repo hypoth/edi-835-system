@@ -5,6 +5,7 @@ import com.healthcare.edi835.entity.EdiFileBucket;
 import com.healthcare.edi835.entity.FileGenerationHistory;
 import com.healthcare.edi835.entity.Payer;
 import com.healthcare.edi835.entity.Payee;
+import com.healthcare.edi835.exception.MissingConfigurationException;
 import com.healthcare.edi835.model.Claim;
 import com.healthcare.edi835.model.PaymentInfo;
 import com.healthcare.edi835.model.RemittanceAdvice;
@@ -156,10 +157,14 @@ public class Edi835GeneratorService {
 
         // Get payer and payee information
         Payer payer = payerRepository.findByPayerId(bucket.getPayerId())
-                .orElseThrow(() -> new IllegalStateException("Payer not found: " + bucket.getPayerId()));
+                .orElseThrow(() -> new MissingConfigurationException(
+                        MissingConfigurationException.ConfigurationType.PAYER,
+                        bucket.getPayerId()));
 
         Payee payee = payeeRepository.findByPayeeId(bucket.getPayeeId())
-                .orElseThrow(() -> new IllegalStateException("Payee not found: " + bucket.getPayeeId()));
+                .orElseThrow(() -> new MissingConfigurationException(
+                        MissingConfigurationException.ConfigurationType.PAYEE,
+                        bucket.getPayeeId()));
 
         // Get claims for this bucket
         List<ClaimProcessingLog> claimLogs = claimLogRepository.findByBucketId(bucket.getBucketId());

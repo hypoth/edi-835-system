@@ -31,12 +31,16 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Timeline as TimelineIcon,
+  Warning as WarningIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bucketService } from '../../services/bucketService';
-import { Bucket, BucketStatus } from '../../types/models';
+import { Bucket, BucketStatus, BucketConfigurationCheck, CreatePayerFromBucketRequest, CreatePayeeFromBucketRequest } from '../../types/models';
 import { toast } from 'react-toastify';
+import CreatePayerForm from '../../components/buckets/CreatePayerForm';
+import CreatePayeeForm from '../../components/buckets/CreatePayeeForm';
 
 const BucketDetails: React.FC = () => {
   const { bucketId } = useParams<{ bucketId: string }>();
@@ -45,6 +49,8 @@ const BucketDetails: React.FC = () => {
   const [transitionDialogOpen, setTransitionDialogOpen] = React.useState(false);
   const [transitionType, setTransitionType] = React.useState<'approval' | 'generation' | 'complete' | 'fail' | null>(null);
   const [comments, setComments] = React.useState('');
+  const [createPayerOpen, setCreatePayerOpen] = React.useState(false);
+  const [createPayeeOpen, setCreatePayeeOpen] = React.useState(false);
 
   // Fetch bucket details
   const { data: bucket, isLoading, error } = useQuery<Bucket>({
@@ -52,6 +58,14 @@ const BucketDetails: React.FC = () => {
     queryFn: () => bucketService.getBucketById(bucketId!),
     enabled: !!bucketId,
     refetchInterval: 10000, // Refresh every 10 seconds
+  });
+
+  // Fetch configuration check (only for FAILED or MISSING_CONFIGURATION status)
+  const { data: configCheck } = useQuery<BucketConfigurationCheck>({
+    queryKey: ['bucket-config-check', bucketId],
+    queryFn: () => bucketService.checkConfiguration(bucketId!),
+    enabled: !!bucketId && !!bucket && (bucket.status === BucketStatus.FAILED || bucket.status === BucketStatus.MISSING_CONFIGURATION),
+    refetchInterval: 10000,
   });
 
   // Get status color
@@ -67,6 +81,8 @@ const BucketDetails: React.FC = () => {
         return 'success';
       case BucketStatus.FAILED:
         return 'error';
+      case BucketStatus.MISSING_CONFIGURATION:
+        return 'warning';
       default:
         return 'default';
     }
@@ -133,6 +149,34 @@ const BucketDetails: React.FC = () => {
     },
     onError: () => {
       toast.error('Failed to mark bucket as failed');
+    },
+  });
+
+  // Mutation for creating payer
+  const createPayerMutation = useMutation({
+    mutationFn: (data: CreatePayerFromBucketRequest) => bucketService.createPayerFromBucket(data),
+    onSuccess: () => {
+      toast.success('Payer created successfully');
+      queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] });
+      queryClient.invalidateQueries({ queryKey: ['bucket-config-check', bucketId] });
+      setCreatePayerOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to create payer');
+    },
+  });
+
+  // Mutation for creating payee
+  const createPayeeMutation = useMutation({
+    mutationFn: (data: CreatePayeeFromBucketRequest) => bucketService.createPayeeFromBucket(data),
+    onSuccess: () => {
+      toast.success('Payee created successfully');
+      queryClient.invalidateQueries({ queryKey: ['bucket', bucketId] });
+      queryClient.invalidateQueries({ queryKey: ['bucket-config-check', bucketId] });
+      setCreatePayeeOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to create payee');
     },
   });
 
@@ -448,9 +492,9 @@ const BucketDetails: React.FC = () => {
           </Typography>
           <Divider sx={{ mb: 2 }} />
 
-          <Box display="flex" gap={2} flexWrap="wrap">
+          <Box display="flex" flexDirection="column" gap={2}>
             {bucket.status === BucketStatus.ACCUMULATING && (
-              <>
+              <Box display="flex" gap={2} flexWrap="wrap">
                 <Button
                   variant="contained"
                   startIcon={<PlayArrowIcon />}
@@ -475,7 +519,7 @@ const BucketDetails: React.FC = () => {
                 >
                   Transition to Generation
                 </Button>
-              </>
+              </Box>
             )}
 
             {bucket.status === BucketStatus.PENDING_APPROVAL && (
@@ -489,29 +533,101 @@ const BucketDetails: React.FC = () => {
             )}
 
             {bucket.status === BucketStatus.GENERATING && (
-              <Alert severity="info" sx={{ width: '100%' }}>
+              <Alert severity="info">
                 This bucket is currently generating an EDI file. Please wait for the process to complete.
               </Alert>
             )}
 
             {bucket.status === BucketStatus.COMPLETED && (
-              <Alert severity="success" sx={{ width: '100%' }}>
+              <Alert severity="success">
                 This bucket has been completed. View the generated file in the File Management section.
               </Alert>
             )}
 
+            {bucket.status === BucketStatus.MISSING_CONFIGURATION && configCheck && (
+              <>
+                <Alert severity="warning" icon={<WarningIcon />}>
+                  <Typography variant="body2" fontWeight={600} gutterBottom>
+                    Missing Configuration
+                  </Typography>
+                  <Typography variant="body2">
+                    This bucket cannot generate an EDI file because required configuration is missing.
+                    Please create the missing {configCheck.actionRequired === 'CREATE_BOTH' ? 'payer and payee' : configCheck.actionRequired === 'CREATE_PAYER' ? 'payer' : 'payee'} configuration.
+                  </Typography>
+                </Alert>
+
+                <Box display="flex" gap={2} flexWrap="wrap">
+                  {(configCheck.actionRequired === 'CREATE_PAYER' || configCheck.actionRequired === 'CREATE_BOTH') && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      startIcon={<AddIcon />}
+                      onClick={() => setCreatePayerOpen(true)}
+                    >
+                      Create Payer: {configCheck.missingPayerId || configCheck.missingPayerName}
+                    </Button>
+                  )}
+
+                  {(configCheck.actionRequired === 'CREATE_PAYEE' || configCheck.actionRequired === 'CREATE_BOTH') && (
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      startIcon={<AddIcon />}
+                      onClick={() => setCreatePayeeOpen(true)}
+                    >
+                      Create Payee: {configCheck.missingPayeeId || configCheck.missingPayeeName}
+                    </Button>
+                  )}
+                </Box>
+              </>
+            )}
+
             {bucket.status === BucketStatus.FAILED && (
               <>
-                <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
-                  This bucket has failed during processing. You can retry or investigate the error.
+                <Alert severity="error">
+                  <Typography variant="body2" fontWeight={600} gutterBottom>
+                    Processing Failed
+                  </Typography>
+                  <Typography variant="body2">
+                    This bucket has failed during processing. {configCheck && !configCheck.hasAllConfiguration
+                      ? 'Missing configuration detected. Please create the required payer/payee configuration below.'
+                      : 'You can retry processing or investigate the error.'}
+                  </Typography>
                 </Alert>
+
+                {configCheck && !configCheck.hasAllConfiguration && (
+                  <Box display="flex" gap={2} flexWrap="wrap">
+                    {(configCheck.actionRequired === 'CREATE_PAYER' || configCheck.actionRequired === 'CREATE_BOTH') && (
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<AddIcon />}
+                        onClick={() => setCreatePayerOpen(true)}
+                      >
+                        Create Payer: {configCheck.missingPayerId || configCheck.missingPayerName}
+                      </Button>
+                    )}
+
+                    {(configCheck.actionRequired === 'CREATE_PAYEE' || configCheck.actionRequired === 'CREATE_BOTH') && (
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<AddIcon />}
+                        onClick={() => setCreatePayeeOpen(true)}
+                      >
+                        Create Payee: {configCheck.missingPayeeId || configCheck.missingPayeeName}
+                      </Button>
+                    )}
+                  </Box>
+                )}
+
                 <Button
                   variant="outlined"
-                  color="error"
-                  startIcon={<CancelIcon />}
-                  onClick={() => handleTransitionClick('fail')}
+                  color="warning"
+                  startIcon={<PlayArrowIcon />}
+                  onClick={() => handleTransitionClick('approval')}
                 >
-                  Retry Processing
+                  Retry (Transition to Approval)
                 </Button>
               </>
             )}
@@ -552,6 +668,32 @@ const BucketDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Create Payer Form */}
+      {configCheck && (
+        <CreatePayerForm
+          open={createPayerOpen}
+          onClose={() => setCreatePayerOpen(false)}
+          bucketId={bucketId!}
+          payerId={configCheck.missingPayerId || bucket.payerId}
+          payerName={configCheck.missingPayerName || bucket.payerName}
+          onSubmit={createPayerMutation.mutateAsync}
+          isSubmitting={createPayerMutation.isPending}
+        />
+      )}
+
+      {/* Create Payee Form */}
+      {configCheck && (
+        <CreatePayeeForm
+          open={createPayeeOpen}
+          onClose={() => setCreatePayeeOpen(false)}
+          bucketId={bucketId!}
+          payeeId={configCheck.missingPayeeId || bucket.payeeId}
+          payeeName={configCheck.missingPayeeName || bucket.payeeName}
+          onSubmit={createPayeeMutation.mutateAsync}
+          isSubmitting={createPayeeMutation.isPending}
+        />
+      )}
     </Box>
   );
 };

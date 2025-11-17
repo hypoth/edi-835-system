@@ -2,6 +2,7 @@ package com.healthcare.edi835.event;
 
 import com.healthcare.edi835.entity.EdiFileBucket;
 import com.healthcare.edi835.entity.FileGenerationHistory;
+import com.healthcare.edi835.exception.MissingConfigurationException;
 import com.healthcare.edi835.repository.EdiFileBucketRepository;
 import com.healthcare.edi835.repository.FileGenerationHistoryRepository;
 import com.healthcare.edi835.service.BucketManagerService;
@@ -81,6 +82,21 @@ public class EdiGenerationEventListener {
 
             log.info("EDI file generation completed successfully for bucket: {}. File: {}",
                     freshBucket.getBucketId(), history.getGeneratedFileName());
+
+        } catch (MissingConfigurationException e) {
+            log.warn("EDI file generation blocked due to missing configuration for bucket: {}. Type: {}, ID: {}",
+                    bucket.getBucketId(), e.getConfigurationType(), e.getMissingId());
+
+            // Mark bucket as MISSING_CONFIGURATION
+            try {
+                EdiFileBucket configBucket = bucketRepository.findById(bucket.getBucketId())
+                        .orElseThrow(() -> new IllegalStateException("Bucket not found: " + bucket.getBucketId()));
+                bucketManagerService.markMissingConfiguration(configBucket);
+                log.info("Bucket {} marked as MISSING_CONFIGURATION. User action required to create {} with ID: {}",
+                        configBucket.getBucketId(), e.getConfigurationType(), e.getMissingId());
+            } catch (Exception markConfigError) {
+                log.error("Failed to mark bucket as MISSING_CONFIGURATION: {}", bucket.getBucketId(), markConfigError);
+            }
 
         } catch (Exception e) {
             log.error("EDI file generation failed for bucket: {}", bucket.getBucketId(), e);

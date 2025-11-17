@@ -187,3 +187,83 @@ SELECT
 --    - Check API: curl http://localhost:8080/api/v1/dashboard/summary | jq
 --    - Check dashboard: http://localhost:3000/dashboard
 -- ===========================================================================
+
+-- ===========================================================================
+-- SAMPLE NCPDP CLAIMS DATA
+-- ===========================================================================
+-- Simulates raw NCPDP D.0 pharmacy claims for testing ingestion and processing
+
+-- Sample NCPDP raw claims
+INSERT OR IGNORE INTO ncpdp_raw_claims (
+    id, payer_id, pharmacy_id, transaction_id, raw_content, transaction_type,
+    service_date, patient_id, prescription_number, status, created_date, retry_count
+)
+VALUES
+    -- Pending NCPDP claim from CVS Pharmacy
+    (
+        'ncpdp-001',
+        'BCBS001',
+        'PHARMACY001',
+        'TXN-2024-001',
+        'STX~AM01~PHARMACY001~AM04~PROVIDER001~AM07~BCBS001~AM11~123456789~AM13~2024-01-15~AM15~50.00~AN~SE~',
+        'B1',
+        '2024-01-15',
+        '123456789',
+        'RX123456',
+        'PENDING',
+        datetime('now', '-2 hours'),
+        0
+    ),
+
+    -- Processing NCPDP claim from Walgreens
+    (
+        'ncpdp-002',
+        'UHC001',
+        'PHARMACY002',
+        'TXN-2024-002',
+        'STX~AM01~PHARMACY002~AM04~PROVIDER002~AM07~UHC001~AM11~987654321~AM13~2024-01-16~AM15~75.50~AN~SE~',
+        'B1',
+        '2024-01-16',
+        '987654321',
+        'RX789012',
+        'PROCESSING',
+        datetime('now', '-1 hour'),
+        0
+    ),
+
+    -- Processed NCPDP claim
+    (
+        'ncpdp-003',
+        'AETNA001',
+        'PHARMACY001',
+        'TXN-2024-003',
+        'STX~AM01~PHARMACY001~AM04~PROVIDER001~AM07~AETNA001~AM11~555666777~AM13~2024-01-17~AM15~120.00~AN~SE~',
+        'B1',
+        '2024-01-17',
+        '555666777',
+        'RX345678',
+        'PROCESSED',
+        datetime('now', '-3 hours'),
+        0
+    );
+
+-- Add processing log entries for the processed claim
+INSERT OR IGNORE INTO ncpdp_processing_log (
+    ncpdp_claim_id, processing_stage, status, message, details, created_date
+)
+VALUES
+    ('ncpdp-003', 'PARSE', 'SUCCESS', 'Successfully parsed NCPDP transaction', '{"segments": 8}', datetime('now', '-2 hours', '-50 minutes')),
+    ('ncpdp-003', 'MAP', 'SUCCESS', 'Mapped NCPDP to Claim entity', '{"claimId": "claim-ncpdp-003"}', datetime('now', '-2 hours', '-45 minutes')),
+    ('ncpdp-003', 'PROCESS', 'SUCCESS', 'Claim processed successfully', '{"bucketId": "bucket-001"}', datetime('now', '-2 hours', '-40 minutes')),
+    ('ncpdp-003', 'COMPLETE', 'SUCCESS', 'NCPDP claim processing complete', NULL, datetime('now', '-2 hours', '-35 minutes'));
+
+-- Update processed claim with claim_id and processed_date
+UPDATE ncpdp_raw_claims
+SET claim_id = 'claim-ncpdp-003',
+    processed_date = datetime('now', '-2 hours', '-35 minutes')
+WHERE id = 'ncpdp-003';
+
+-- Update processing claim with processing_started_date
+UPDATE ncpdp_raw_claims
+SET processing_started_date = datetime('now', '-1 hour')
+WHERE id = 'ncpdp-002';

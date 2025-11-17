@@ -5,6 +5,7 @@ export enum BucketStatus {
   GENERATING = 'GENERATING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  MISSING_CONFIGURATION = 'MISSING_CONFIGURATION',
 }
 
 export enum DeliveryStatus {
@@ -214,4 +215,53 @@ export interface ApprovalRequest {
   actionBy: string;
   comments?: string;
   rejectionReason?: string;
+}
+
+// Configuration Check Types
+export interface BucketConfigurationCheck {
+  bucketId: string;
+  hasAllConfiguration: boolean;
+  payerExists: boolean;
+  payeeExists: boolean;
+  missingPayerId?: string;
+  missingPayerName?: string;
+  missingPayeeId?: string;
+  missingPayeeName?: string;
+  actionRequired: 'CREATE_PAYER' | 'CREATE_PAYEE' | 'CREATE_BOTH' | 'NONE';
+}
+
+export interface CreatePayerFromBucketRequest {
+  bucketId: string;
+  payerId: string;
+  payerName: string;
+  isaSenderId: string;
+  isaQualifier?: string;
+  gsApplicationSenderId?: string;
+  addressStreet?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressZip?: string;
+  sftpHost?: string;
+  sftpPort?: number;
+  sftpUsername?: string;
+  sftpPassword?: string;
+  sftpPath?: string;
+  requiresSpecialHandling?: boolean;
+  isActive?: boolean;
+  createdBy?: string;
+}
+
+export interface CreatePayeeFromBucketRequest {
+  bucketId: string;
+  payeeId: string;
+  payeeName: string;
+  npi?: string;
+  taxId?: string;
+  addressStreet?: string;
+  addressCity?: string;
+  addressState?: string;
+  addressZip?: string;
+  requiresSpecialHandling?: boolean;
+  isActive?: boolean;
+  createdBy?: string;
 }

@@ -36,7 +36,10 @@ const validationSchema = yup.object({
     .min(3, 'Payer name must be at least 3 characters'),
   isaQualifier: yup
     .string()
-    .matches(/^[A-Z0-9]{2}$/, 'ISA Qualifier must be exactly 2 characters (e.g., ZZ, 01, 30)')
+    .test('isaQualifier-format', 'ISA Qualifier must be exactly 2 characters (e.g., ZZ, 01, 30)', function(value) {
+      if (!value || value === '') return true; // Allow empty
+      return /^[A-Z0-9]{2}$/.test(value);
+    })
     .default('ZZ'),
   isaSenderId: yup
     .string()
@@ -45,21 +48,28 @@ const validationSchema = yup.object({
     .matches(/^[A-Z0-9]+$/, 'ISA Sender ID must contain only uppercase letters and numbers'),
   gsApplicationSenderId: yup
     .string()
-    .max(15, 'GS Application Sender ID must not exceed 15 characters')
-    .matches(/^[A-Z0-9]*$/, 'GS Application Sender ID must contain only uppercase letters and numbers'),
+    .test('gsApplicationSenderId-format', 'GS Application Sender ID must contain only uppercase letters and numbers', function(value) {
+      if (!value || value === '') return true; // Allow empty
+      return /^[A-Z0-9]+$/.test(value) && value.length <= 15;
+    }),
   addressStreet: yup.string().max(255, 'Address street must not exceed 255 characters'),
   addressCity: yup.string().max(100, 'City must not exceed 100 characters'),
   addressState: yup
     .string()
-    .matches(/^[A-Z]{0,2}$/, 'State must be 2 uppercase letters (e.g., CA, NY)')
-    .max(2, 'State must be exactly 2 characters'),
+    .test('state-format', 'State must be 2 uppercase letters (e.g., CA, NY)', function(value) {
+      if (!value || value === '') return true; // Allow empty
+      return /^[A-Z]{2}$/.test(value);
+    }),
   addressZip: yup
     .string()
-    .matches(/^[0-9]{0,5}(-[0-9]{4})?$/, 'ZIP must be in format: 12345 or 12345-6789')
-    .max(10, 'ZIP must not exceed 10 characters'),
+    .test('zip-format', 'ZIP must be in format: 12345 or 12345-6789', function(value) {
+      if (!value || value === '') return true; // Allow empty
+      return /^[0-9]{5}(-[0-9]{4})?$/.test(value);
+    }),
   sftpHost: yup.string().max(255, 'SFTP Host must not exceed 255 characters'),
   sftpPort: yup
     .number()
+    .transform((value, originalValue) => originalValue === '' ? null : value)
     .min(1, 'Port must be between 1 and 65535')
     .max(65535, 'Port must be between 1 and 65535')
     .nullable(),
@@ -76,7 +86,7 @@ const PayerForm: React.FC<PayerFormProps> = ({ payer, onSuccess, onCancel }) => 
     initialValues: {
       payerId: payer?.payerId || '',
       payerName: payer?.payerName || '',
-      isaQualifier: payer?.isaQualifier || 'ZZ',
+      isaQualifier: (payer?.isaQualifier && payer.isaQualifier.trim() !== '') ? payer.isaQualifier : 'ZZ',
       isaSenderId: payer?.isaSenderId || '',
       gsApplicationSenderId: payer?.gsApplicationSenderId || '',
       addressStreet: payer?.addressStreet || '',
@@ -92,6 +102,7 @@ const PayerForm: React.FC<PayerFormProps> = ({ payer, onSuccess, onCancel }) => 
       isActive: payer?.isActive ?? true,
     },
     validationSchema: validationSchema,
+    validateOnMount: true, // Validate immediately on mount to show button state correctly
     onSubmit: async (values) => {
       setLoading(true);
       try {
@@ -121,6 +132,15 @@ const PayerForm: React.FC<PayerFormProps> = ({ payer, onSuccess, onCancel }) => 
       }
     },
   });
+
+  // Debug: Log validation status
+  React.useEffect(() => {
+    console.log('=== Formik Debug Info ===');
+    console.log('Form Valid:', formik.isValid);
+    console.log('Form Errors:', formik.errors);
+    console.log('Form Values:', formik.values);
+    console.log('Touched Fields:', formik.touched);
+  }, [formik.isValid, formik.errors, formik.values]);
 
   const handleAutoFillIsaSenderId = () => {
     if (formik.values.payerId && !formik.values.isaSenderId) {

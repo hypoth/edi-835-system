@@ -111,7 +111,8 @@ public class EdiFileBucket {
         PENDING_APPROVAL,
         GENERATING,
         COMPLETED,
-        FAILED
+        FAILED,
+        MISSING_CONFIGURATION  // Missing payer or payee configuration
     }
 
     @PreUpdate
@@ -149,6 +150,13 @@ public class EdiFileBucket {
      */
     public void markFailed() {
         this.status = BucketStatus.FAILED;
+    }
+
+    /**
+     * Transitions bucket to MISSING_CONFIGURATION status.
+     */
+    public void markMissingConfiguration() {
+        this.status = BucketStatus.MISSING_CONFIGURATION;
     }
 
     /**

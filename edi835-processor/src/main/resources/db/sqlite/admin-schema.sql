@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS adjustment_code_mapping (
 CREATE TABLE IF NOT EXISTS edi_file_buckets (
     bucket_id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     status TEXT NOT NULL DEFAULT 'ACCUMULATING'
-        CHECK (status IN ('ACCUMULATING', 'PENDING_APPROVAL', 'GENERATING', 'COMPLETED', 'FAILED')),
+        CHECK (status IN ('ACCUMULATING', 'PENDING_APPROVAL', 'GENERATING', 'COMPLETED', 'FAILED', 'MISSING_CONFIGURATION')),
     bucketing_rule_id TEXT REFERENCES edi_bucketing_rules(id),
     bucketing_rule_name TEXT,
     payer_id TEXT NOT NULL,
@@ -545,16 +545,98 @@ VALUES
     ('8a0e8400-e29b-41d4-a716-446655440013', 'RARC', 'M15', 'Separately billed services/tests have been bundled', NULL, 1);
 
 -- ===========================================================================
+-- NCPDP RAW CLAIMS TABLE
+-- Stores raw NCPDP D.0 pharmacy claims before processing
+-- This table is monitored by NcpdpChangeFeedProcessor for automatic parsing
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS ncpdp_raw_claims (
+    id TEXT PRIMARY KEY,
+
+    -- Indexing fields (extracted for quick lookups)
+    payer_id TEXT NOT NULL,
+    pharmacy_id TEXT,
+    transaction_id TEXT,
+
+    -- Raw NCPDP D.0 transaction content (STX -> SE block)
+    raw_content TEXT NOT NULL,
+
+    -- Transaction metadata
+    transaction_type TEXT,      -- B1, B2, B3, etc.
+    service_date DATE,
+    patient_id TEXT,
+    prescription_number TEXT,
+
+    -- Processing status
+    status TEXT DEFAULT 'PENDING' NOT NULL CHECK (status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED')),
+
+    -- Timestamps
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    processing_started_date TIMESTAMP,
+    processed_date TIMESTAMP,
+
+    -- Link to processed claim
+    claim_id TEXT,  -- References processed Claim.id
+
+    -- Error tracking
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+
+    -- Audit fields
+    created_by TEXT
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_ncpdp_status ON ncpdp_raw_claims(status);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_payer ON ncpdp_raw_claims(payer_id);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_pharmacy ON ncpdp_raw_claims(pharmacy_id);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_created ON ncpdp_raw_claims(created_date);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_claim_id ON ncpdp_raw_claims(claim_id);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_service_date ON ncpdp_raw_claims(service_date);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_prescription ON ncpdp_raw_claims(prescription_number);
+
+-- Composite index for pending claims query (most common)
+CREATE INDEX IF NOT EXISTS idx_ncpdp_pending_created ON ncpdp_raw_claims(status, created_date)
+    WHERE status = 'PENDING';
+
+-- Index for finding stuck processing claims
+CREATE INDEX IF NOT EXISTS idx_ncpdp_stuck_processing ON ncpdp_raw_claims(status, processing_started_date)
+    WHERE status = 'PROCESSING';
+
+-- ===========================================================================
+-- NCPDP PROCESSING LOG TABLE
+-- Audit log of NCPDP claim processing stages for debugging and monitoring
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS ncpdp_processing_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ncpdp_claim_id TEXT NOT NULL,
+    processing_stage TEXT,      -- PARSE, MAP, PROCESS, COMPLETE
+    status TEXT,                -- SUCCESS, ERROR, WARNING
+    message TEXT,
+    details TEXT,               -- JSON data stored as TEXT
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    FOREIGN KEY (ncpdp_claim_id) REFERENCES ncpdp_raw_claims(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ncpdp_log_claim ON ncpdp_processing_log(ncpdp_claim_id);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_log_status ON ncpdp_processing_log(status);
+CREATE INDEX IF NOT EXISTS idx_ncpdp_log_created ON ncpdp_processing_log(created_date DESC);
+
+-- ===========================================================================
 -- NOTES
 -- ===========================================================================
 -- 1. This schema is for SQLite local development only
 -- 2. Production should use the PostgreSQL schema in /database/schema.sql
 -- 3. Change feed triggers DO NOT fire for these admin portal tables
 -- 4. Only the 'claims' table (in schema.sql) has change feed triggers
--- 5. All IDs use proper UUID format (36 chars with hyphens: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+-- 5. All IDs use proper UUID format (36 chars with hyphens) or TEXT for flexibility
 -- 6. Sample data includes PAYER001/PAYEE001 for test-change-feed.sh script compatibility
 -- 7. JSON arrays stored as TEXT (parse in application layer with StringArrayConverter)
 -- 8. Foreign keys enabled via PRAGMA foreign_keys = ON
+-- 9. NCPDP tables (ncpdp_raw_claims, ncpdp_processing_log) included for pharmacy claims
+-- 10. NCPDP change feed processing is separate from regular claims change feed
 --
 -- COMMIT CRITERIA FIELD MAPPING:
 -- - auto_commit_threshold: Stores AMOUNT threshold (in dollars) for AUTO/HYBRID modes

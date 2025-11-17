@@ -3,6 +3,7 @@ package com.healthcare.edi835.service;
 import com.healthcare.edi835.entity.*;
 import com.healthcare.edi835.model.Claim;
 import com.healthcare.edi835.repository.*;
+import com.healthcare.edi835.util.EdiIdentifierNormalizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -111,9 +112,13 @@ public class ClaimAggregationService {
      * @return the bucket
      */
     private EdiFileBucket findOrCreatePayerPayeeBucket(Claim claim, EdiBucketingRule rule) {
-        // Try to find existing accumulating bucket
+        // Normalize IDs for lookup
+        String normalizedPayerId = EdiIdentifierNormalizer.normalizePayerId(claim.getPayerId());
+        String normalizedPayeeId = EdiIdentifierNormalizer.normalizePayeeId(claim.getPayeeId());
+
+        // Try to find existing accumulating bucket using normalized IDs
         Optional<EdiFileBucket> existingBucket = bucketRepository
-                .findAccumulatingBucketForPayerPayee(claim.getPayerId(), claim.getPayeeId());
+                .findAccumulatingBucketForPayerPayee(normalizedPayerId, normalizedPayeeId);
 
         if (existingBucket.isPresent()) {
             log.debug("Found existing PAYER_PAYEE bucket: {}", existingBucket.get().getBucketId());
@@ -121,8 +126,8 @@ public class ClaimAggregationService {
         }
 
         // Create new bucket
-        log.info("Creating new PAYER_PAYEE bucket for payer={}, payee={}",
-                claim.getPayerId(), claim.getPayeeId());
+        log.info("Creating new PAYER_PAYEE bucket for payer={} (normalized: {}), payee={} (normalized: {})",
+                claim.getPayerId(), normalizedPayerId, claim.getPayeeId(), normalizedPayeeId);
 
         return createNewBucket(claim, rule, null, null);
     }
@@ -144,9 +149,13 @@ public class ClaimAggregationService {
             return findOrCreatePayerPayeeBucket(claim, rule);
         }
 
-        // Try to find existing accumulating bucket
+        // Normalize IDs for lookup
+        String normalizedPayerId = EdiIdentifierNormalizer.normalizePayerId(claim.getPayerId());
+        String normalizedPayeeId = EdiIdentifierNormalizer.normalizePayeeId(claim.getPayeeId());
+
+        // Try to find existing accumulating bucket using normalized IDs
         Optional<EdiFileBucket> existingBucket = bucketRepository
-                .findAccumulatingBucketForBinPcn(claim.getPayerId(), claim.getPayeeId(),
+                .findAccumulatingBucketForBinPcn(normalizedPayerId, normalizedPayeeId,
                         binNumber, pcnNumber);
 
         if (existingBucket.isPresent()) {
@@ -155,8 +164,8 @@ public class ClaimAggregationService {
         }
 
         // Create new bucket
-        log.info("Creating new BIN_PCN bucket for payer={}, payee={}, BIN={}, PCN={}",
-                claim.getPayerId(), claim.getPayeeId(), binNumber, pcnNumber);
+        log.info("Creating new BIN_PCN bucket for payer={} (normalized: {}), payee={} (normalized: {}), BIN={}, PCN={}",
+                claim.getPayerId(), normalizedPayerId, claim.getPayeeId(), normalizedPayeeId, binNumber, pcnNumber);
 
         return createNewBucket(claim, rule, binNumber, pcnNumber);
     }
@@ -185,14 +194,33 @@ public class ClaimAggregationService {
      */
     private EdiFileBucket createNewBucket(Claim claim, EdiBucketingRule rule,
                                           String binNumber, String pcnNumber) {
-        // Get payer and payee names
-        String payerName = payerRepository.findByPayerId(claim.getPayerId())
-                .map(Payer::getPayerName)
-                .orElse(claim.getPayerId());
+        // Normalize IDs from D0 claims to conform to EDI validation rules
+        String normalizedPayerId = EdiIdentifierNormalizer.normalizePayerId(claim.getPayerId());
+        String normalizedPayeeId = EdiIdentifierNormalizer.normalizePayeeId(claim.getPayeeId());
 
-        String payeeName = payeeRepository.findByPayeeId(claim.getPayeeId())
+        log.debug("Creating bucket with normalized IDs - Payer: '{}' -> '{}', Payee: '{}' -> '{}'",
+                claim.getPayerId(), normalizedPayerId, claim.getPayeeId(), normalizedPayeeId);
+
+        // Get payer and payee names (try both raw and normalized IDs)
+        String payerName = payerRepository.findByPayerId(normalizedPayerId)
+                .or(() -> payerRepository.findByPayerId(claim.getPayerId()))
+                .map(Payer::getPayerName)
+                .orElseGet(() -> {
+                    // If payer doesn't exist, auto-create it
+                    log.info("Payer '{}' (normalized: '{}') not found in master data. Auto-creating payer record.",
+                            claim.getPayerId(), normalizedPayerId);
+                    return autoCreatePayer(claim.getPayerId(), normalizedPayerId);
+                });
+
+        String payeeName = payeeRepository.findByPayeeId(normalizedPayeeId)
+                .or(() -> payeeRepository.findByPayeeId(claim.getPayeeId()))
                 .map(Payee::getPayeeName)
-                .orElse(claim.getPayeeId());
+                .orElseGet(() -> {
+                    // If payee doesn't exist, auto-create it
+                    log.info("Payee '{}' (normalized: '{}') not found in master data. Auto-creating payee record.",
+                            claim.getPayeeId(), normalizedPayeeId);
+                    return autoCreatePayee(claim.getPayeeId(), normalizedPayeeId);
+                });
 
         // Get file naming template
         EdiFileNamingTemplate template = templateRepository
@@ -201,13 +229,13 @@ public class ClaimAggregationService {
                 .findFirst()
                 .orElse(templateRepository.findDefaultTemplate().orElse(null));
 
-        // Create bucket
+        // Create bucket with normalized IDs
         EdiFileBucket bucket = EdiFileBucket.builder()
                 .bucketingRule(rule)
                 .bucketingRuleName(rule.getRuleName())
-                .payerId(claim.getPayerId())
+                .payerId(normalizedPayerId)
                 .payerName(payerName)
-                .payeeId(claim.getPayeeId())
+                .payeeId(normalizedPayeeId)
                 .payeeName(payeeName)
                 .binNumber(binNumber)
                 .pcnNumber(pcnNumber)
@@ -215,6 +243,89 @@ public class ClaimAggregationService {
                 .build();
 
         return bucketRepository.save(bucket);
+    }
+
+    /**
+     * Auto-creates a payer record when master data doesn't exist.
+     *
+     * @param rawPayerId the raw payer ID from D0 claims
+     * @param normalizedPayerId the normalized payer ID
+     * @return the payer name
+     */
+    private String autoCreatePayer(String rawPayerId, String normalizedPayerId) {
+        try {
+            // Create payer entity with generated values
+            Payer payer = new Payer();
+            payer.setPayerId(normalizedPayerId);
+            payer.setPayerName(generateFriendlyName(rawPayerId, "Payer"));
+            payer.setIsaQualifier("ZZ");
+            payer.setIsaSenderId(EdiIdentifierNormalizer.generateIsaSenderId(normalizedPayerId));
+            payer.setGsApplicationSenderId(EdiIdentifierNormalizer.generateGsApplicationSenderId(normalizedPayerId));
+            payer.setIsActive(true);
+            payer.setCreatedBy("SYSTEM_AUTO");
+
+            Payer savedPayer = payerRepository.save(payer);
+
+            log.info("Auto-created payer: ID='{}', Name='{}', ISA Sender ID='{}'",
+                    savedPayer.getPayerId(), savedPayer.getPayerName(), savedPayer.getIsaSenderId());
+
+            return savedPayer.getPayerName();
+
+        } catch (Exception e) {
+            log.error("Failed to auto-create payer '{}': {}", normalizedPayerId, e.getMessage(), e);
+            // Return a friendly name even if creation fails
+            return generateFriendlyName(rawPayerId, "Payer");
+        }
+    }
+
+    /**
+     * Auto-creates a payee record when master data doesn't exist.
+     *
+     * @param rawPayeeId the raw payee ID from D0 claims
+     * @param normalizedPayeeId the normalized payee ID
+     * @return the payee name
+     */
+    private String autoCreatePayee(String rawPayeeId, String normalizedPayeeId) {
+        try {
+            // Create payee entity
+            Payee payee = new Payee();
+            payee.setPayeeId(normalizedPayeeId);
+            payee.setPayeeName(generateFriendlyName(rawPayeeId, "Payee"));
+            payee.setIsActive(true);
+            payee.setCreatedBy("SYSTEM_AUTO");
+
+            Payee savedPayee = payeeRepository.save(payee);
+
+            log.info("Auto-created payee: ID='{}', Name='{}'",
+                    savedPayee.getPayeeId(), savedPayee.getPayeeName());
+
+            return savedPayee.getPayeeName();
+
+        } catch (Exception e) {
+            log.error("Failed to auto-create payee '{}': {}", normalizedPayeeId, e.getMessage(), e);
+            // Return a friendly name even if creation fails
+            return generateFriendlyName(rawPayeeId, "Payee");
+        }
+    }
+
+    /**
+     * Generates a friendly display name from a raw ID.
+     *
+     * @param rawId the raw ID
+     * @param prefix the prefix (e.g., "Payer", "Payee")
+     * @return friendly name
+     */
+    private String generateFriendlyName(String rawId, String prefix) {
+        if (rawId == null || rawId.isEmpty()) {
+            return prefix + " (Unknown)";
+        }
+
+        // Convert to title case and clean up
+        String friendly = rawId.replaceAll("[_-]", " ");
+        friendly = friendly.substring(0, 1).toUpperCase() +
+                   friendly.substring(1).toLowerCase();
+
+        return friendly;
     }
 
     /**

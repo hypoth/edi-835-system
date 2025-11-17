@@ -1,5 +1,13 @@
 import apiClient from './apiClient';
-import { Bucket, BucketStatus } from '../types/models';
+import {
+  Bucket,
+  BucketStatus,
+  BucketConfigurationCheck,
+  CreatePayerFromBucketRequest,
+  CreatePayeeFromBucketRequest,
+  Payer,
+  Payee
+} from '../types/models';
 
 export const bucketService = {
   // Get all buckets
@@ -88,6 +96,22 @@ export const bucketService = {
   // Get recent buckets
   getRecentBuckets: async (limit: number = 10): Promise<Bucket[]> => {
     const response = await apiClient.get(`/buckets/recent?limit=${limit}`);
+    return response.data;
+  },
+
+  // Configuration management
+  checkConfiguration: async (bucketId: string): Promise<BucketConfigurationCheck> => {
+    const response = await apiClient.get(`/buckets/${bucketId}/configuration-check`);
+    return response.data;
+  },
+
+  createPayerFromBucket: async (request: CreatePayerFromBucketRequest): Promise<{ message: string; payer: Payer }> => {
+    const response = await apiClient.post(`/buckets/${request.bucketId}/create-payer`, request);
+    return response.data;
+  },
+
+  createPayeeFromBucket: async (request: CreatePayeeFromBucketRequest): Promise<{ message: string; payee: Payee }> => {
+    const response = await apiClient.post(`/buckets/${request.bucketId}/create-payee`, request);
     return response.data;
   },
 };

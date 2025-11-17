@@ -1038,6 +1038,9 @@ sftp sftpuser1@your_server_ip
 ```
 Enter the password when prompted. You should be connected and restricted to the configured directory.
 
+On linux the home directory can be specified to be 
+sudo chown payer001:sftpusers /var/sftp/payer001/test/835
+
 ---
 
 ## Troubleshooting

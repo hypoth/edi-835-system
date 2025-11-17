@@ -327,6 +327,26 @@ public class BucketManagerService {
     }
 
     /**
+     * Transitions bucket to MISSING_CONFIGURATION status.
+     *
+     * @param bucket the bucket to mark as missing configuration
+     */
+    @Transactional
+    public void markMissingConfiguration(EdiFileBucket bucket) {
+        EdiFileBucket.BucketStatus previousStatus = bucket.getStatus();
+
+        log.warn("Marking bucket {} as MISSING_CONFIGURATION. User action required.", bucket.getBucketId());
+
+        bucket.markMissingConfiguration();
+        EdiFileBucket savedBucket = bucketRepository.save(bucket);
+
+        // Publish event for UI notification
+        BucketStatusChangeEvent event = new BucketStatusChangeEvent(
+                this, savedBucket, previousStatus, EdiFileBucket.BucketStatus.MISSING_CONFIGURATION);
+        eventPublisher.publishEvent(event);
+    }
+
+    /**
      * Gets all active buckets.
      *
      * @return list of active buckets
