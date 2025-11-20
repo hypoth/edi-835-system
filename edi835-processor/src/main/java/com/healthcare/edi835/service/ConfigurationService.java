@@ -113,7 +113,23 @@ public class ConfigurationService {
     @Cacheable(value = "commitCriteria", key = "#rule.ruleId")
     public Optional<EdiCommitCriteria> getCommitCriteriaForRule(EdiBucketingRule rule) {
         log.debug("Retrieving commit criteria for rule: {}", rule.getRuleName());
-        return commitCriteriaRepository.findByLinkedBucketingRuleAndIsActiveTrue(rule);
+
+        List<EdiCommitCriteria> criteriaList = commitCriteriaRepository
+                .findByLinkedBucketingRuleAndIsActiveTrue(rule);
+
+        if (criteriaList.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Handle case where multiple active criteria exist (configuration error)
+        if (criteriaList.size() > 1) {
+            log.warn("Multiple active commit criteria found for rule {}. Found {} criteria. Using first match: {}",
+                    rule.getRuleName(),
+                    criteriaList.size(),
+                    criteriaList.get(0).getCriteriaName());
+        }
+
+        return Optional.of(criteriaList.get(0));
     }
 
     /**

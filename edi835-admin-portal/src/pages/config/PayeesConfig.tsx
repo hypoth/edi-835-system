@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -22,6 +22,7 @@ import {
   Switch,
   FormControlLabel,
   Chip,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -33,6 +34,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { configurationService } from '../../services/configurationService';
 import { Payee } from '../../types/models';
 import { toast } from 'react-toastify';
+
+type SortField = 'payeeId' | 'payeeName' | 'npi' | 'taxId' | 'isActive' | 'requiresSpecialHandling';
+type SortOrder = 'asc' | 'desc';
 
 const PayeesConfig: React.FC = () => {
   const queryClient = useQueryClient();
@@ -49,12 +53,68 @@ const PayeesConfig: React.FC = () => {
     requiresSpecialHandling: false,
     isActive: true,
   });
+  const [sortField, setSortField] = useState<SortField>('payeeName');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   // Fetch payees
   const { data: payees, isLoading, refetch } = useQuery<Payee[]>({
     queryKey: ['payees'],
     queryFn: configurationService.getAllPayees,
   });
+
+  // Sort payees based on current sort field and order
+  const sortedPayees = useMemo(() => {
+    if (!payees) return [];
+
+    return [...payees].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'payeeId':
+          aValue = a.payeeId.toLowerCase();
+          bValue = b.payeeId.toLowerCase();
+          break;
+        case 'payeeName':
+          aValue = a.payeeName.toLowerCase();
+          bValue = b.payeeName.toLowerCase();
+          break;
+        case 'npi':
+          aValue = a.npi?.toLowerCase() || '';
+          bValue = b.npi?.toLowerCase() || '';
+          break;
+        case 'taxId':
+          aValue = a.taxId?.toLowerCase() || '';
+          bValue = b.taxId?.toLowerCase() || '';
+          break;
+        case 'isActive':
+          aValue = a.isActive ? 1 : 0;
+          bValue = b.isActive ? 1 : 0;
+          break;
+        case 'requiresSpecialHandling':
+          aValue = a.requiresSpecialHandling ? 1 : 0;
+          bValue = b.requiresSpecialHandling ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [payees, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Create mutation
   const createMutation = useMutation({
@@ -191,19 +251,67 @@ const PayeesConfig: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>Payee ID</strong></TableCell>
-                <TableCell><strong>Payee Name</strong></TableCell>
-                <TableCell><strong>NPI</strong></TableCell>
-                <TableCell><strong>Tax ID</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'payeeId'}
+                    direction={sortField === 'payeeId' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('payeeId')}
+                  >
+                    <strong>Payee ID</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'payeeName'}
+                    direction={sortField === 'payeeName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('payeeName')}
+                  >
+                    <strong>Payee Name</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'npi'}
+                    direction={sortField === 'npi' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('npi')}
+                  >
+                    <strong>NPI</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'taxId'}
+                    direction={sortField === 'taxId' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('taxId')}
+                  >
+                    <strong>Tax ID</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell><strong>Contact</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
-                <TableCell><strong>Special Handling</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'isActive'}
+                    direction={sortField === 'isActive' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('isActive')}
+                  >
+                    <strong>Status</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'requiresSpecialHandling'}
+                    direction={sortField === 'requiresSpecialHandling' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('requiresSpecialHandling')}
+                  >
+                    <strong>Special Handling</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {payees && payees.length > 0 ? (
-                payees.map((payee) => (
+              {sortedPayees.length > 0 ? (
+                sortedPayees.map((payee) => (
                   <TableRow key={payee.id} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600}>

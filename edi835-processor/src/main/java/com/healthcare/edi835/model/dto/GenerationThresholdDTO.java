@@ -28,9 +28,33 @@ public class GenerationThresholdDTO {
     private String timeDuration;
     private String generationSchedule;
 
-    // Instead of full entity object, just include ID and name
+    // Nested bucketing rule object for frontend compatibility
+    private BucketingRuleSummary linkedBucketingRule;
+
+    // Backward compatibility: Keep flat fields for legacy clients
     private UUID linkedBucketingRuleId;
     private String linkedBucketingRuleName;
+
+    /**
+     * Minimal bucketing rule summary for threshold DTO.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BucketingRuleSummary {
+        private UUID id;
+        private String ruleId;  // Alias for id
+        private String ruleName;
+        private String ruleType;
+        private Integer priority;
+        private Boolean isActive;
+
+        @JsonProperty("ruleId")
+        public UUID getRuleIdAlias() {
+            return this.id;
+        }
+    }
 
     private Boolean isActive;
     private LocalDateTime createdAt;

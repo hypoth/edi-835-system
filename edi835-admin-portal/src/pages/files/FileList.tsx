@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -18,6 +18,7 @@ import {
   Button,
   CircularProgress,
   Tooltip,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Download as DownloadIcon,
@@ -31,12 +32,17 @@ import { fileService } from '../../services/fileService';
 import { FileHistory, DeliveryStatus } from '../../types/models';
 import { toast } from 'react-toastify';
 
+type SortField = 'fileName' | 'payerName' | 'deliveryStatus' | 'fileSizeBytes' | 'claimCount' | 'totalAmount' | 'generatedAt' | 'deliveredAt';
+type SortOrder = 'asc' | 'desc';
+
 const FileList: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<DeliveryStatus | ''>('');
   const [payerFilter, setPayerFilter] = useState('');
   const [payeeFilter, setPayeeFilter] = useState('');
+  const [sortField, setSortField] = useState<SortField>('generatedAt');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   // Fetch files
   const { data: files, isLoading, refetch } = useQuery<FileHistory[]>({
@@ -107,6 +113,68 @@ const FileList: React.FC = () => {
     const matchesPayee = !payeeFilter || file.bucket.payeeName.toLowerCase().includes(payeeFilter.toLowerCase());
     return matchesPayer && matchesPayee;
   });
+
+  // Sort files based on current sort field and order
+  const sortedFiles = useMemo(() => {
+    if (!filteredFiles) return [];
+
+    return [...filteredFiles].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'fileName':
+          aValue = a.fileName.toLowerCase();
+          bValue = b.fileName.toLowerCase();
+          break;
+        case 'payerName':
+          aValue = a.bucket.payerName.toLowerCase();
+          bValue = b.bucket.payerName.toLowerCase();
+          break;
+        case 'deliveryStatus':
+          aValue = a.deliveryStatus;
+          bValue = b.deliveryStatus;
+          break;
+        case 'fileSizeBytes':
+          aValue = a.fileSizeBytes;
+          bValue = b.fileSizeBytes;
+          break;
+        case 'claimCount':
+          aValue = a.claimCount;
+          bValue = b.claimCount;
+          break;
+        case 'totalAmount':
+          aValue = a.totalAmount;
+          bValue = b.totalAmount;
+          break;
+        case 'generatedAt':
+          aValue = new Date(a.generatedAt).getTime();
+          bValue = new Date(b.generatedAt).getTime();
+          break;
+        case 'deliveredAt':
+          aValue = a.deliveredAt ? new Date(a.deliveredAt).getTime() : 0;
+          bValue = b.deliveredAt ? new Date(b.deliveredAt).getTime() : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredFiles, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes';
@@ -195,20 +263,84 @@ const FileList: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>File Name</strong></TableCell>
-                <TableCell><strong>Payer / Payee</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
-                <TableCell align="right"><strong>Size</strong></TableCell>
-                <TableCell align="right"><strong>Claims</strong></TableCell>
-                <TableCell align="right"><strong>Amount</strong></TableCell>
-                <TableCell><strong>Generated</strong></TableCell>
-                <TableCell><strong>Delivered</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'fileName'}
+                    direction={sortField === 'fileName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('fileName')}
+                  >
+                    <strong>File Name</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'payerName'}
+                    direction={sortField === 'payerName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('payerName')}
+                  >
+                    <strong>Payer / Payee</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'deliveryStatus'}
+                    direction={sortField === 'deliveryStatus' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('deliveryStatus')}
+                  >
+                    <strong>Status</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortField === 'fileSizeBytes'}
+                    direction={sortField === 'fileSizeBytes' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('fileSizeBytes')}
+                  >
+                    <strong>Size</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortField === 'claimCount'}
+                    direction={sortField === 'claimCount' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('claimCount')}
+                  >
+                    <strong>Claims</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortField === 'totalAmount'}
+                    direction={sortField === 'totalAmount' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('totalAmount')}
+                  >
+                    <strong>Amount</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'generatedAt'}
+                    direction={sortField === 'generatedAt' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('generatedAt')}
+                  >
+                    <strong>Generated</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'deliveredAt'}
+                    direction={sortField === 'deliveredAt' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('deliveredAt')}
+                  >
+                    <strong>Delivered</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredFiles && filteredFiles.length > 0 ? (
-                filteredFiles.map((file) => (
+              {sortedFiles.length > 0 ? (
+                sortedFiles.map((file) => (
                   <TableRow key={file.fileId} hover>
                     <TableCell>
                       <Typography variant="body2" fontFamily="monospace">
@@ -321,13 +453,13 @@ const FileList: React.FC = () => {
       </Card>
 
       {/* Summary */}
-      {filteredFiles && filteredFiles.length > 0 && (
+      {sortedFiles.length > 0 && (
         <Box mt={2}>
           <Typography variant="body2" color="textSecondary">
-            Showing {filteredFiles.length} file(s) •
-            Total Size: {formatFileSize(filteredFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0))} •
-            Total Claims: {filteredFiles.reduce((sum, f) => sum + f.claimCount, 0)} •
-            Total Amount: ${filteredFiles.reduce((sum, f) => sum + f.totalAmount, 0).toLocaleString()}
+            Showing {sortedFiles.length} file(s) •
+            Total Size: {formatFileSize(sortedFiles.reduce((sum, f) => sum + f.fileSizeBytes, 0))} •
+            Total Claims: {sortedFiles.reduce((sum, f) => sum + f.claimCount, 0)} •
+            Total Amount: ${sortedFiles.reduce((sum, f) => sum + f.totalAmount, 0).toLocaleString()}
           </Typography>
         </Box>
       )}

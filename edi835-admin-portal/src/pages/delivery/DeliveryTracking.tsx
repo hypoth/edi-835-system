@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -46,10 +47,21 @@ interface DeliveryStats {
   retry: number;
 }
 
+type SortField = 'fileName' | 'payerName' | 'deliveryStatus' | 'generatedAt' | 'retryCount';
+type SortOrder = 'asc' | 'desc';
+
 const DeliveryTracking: React.FC = () => {
   const queryClient = useQueryClient();
   const [logModalOpen, setLogModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FileHistory | null>(null);
+
+  // Sorting state for pending deliveries
+  const [pendingSortField, setPendingSortField] = useState<SortField>('generatedAt');
+  const [pendingSortOrder, setPendingSortOrder] = useState<SortOrder>('desc');
+
+  // Sorting state for failed deliveries
+  const [failedSortField, setFailedSortField] = useState<SortField>('generatedAt');
+  const [failedSortOrder, setFailedSortOrder] = useState<SortOrder>('desc');
 
   // Fetch pending deliveries
   const { data: pendingFiles, isLoading: pendingLoading, refetch: refetchPending } = useQuery<FileHistory[]>({
@@ -141,6 +153,75 @@ const DeliveryTracking: React.FC = () => {
 
   const deliveryRate = stats.total > 0 ? (stats.delivered / stats.total) * 100 : 0;
   const failureRate = stats.total > 0 ? (stats.failed / stats.total) * 100 : 0;
+
+  // Sorting function
+  const sortFiles = (files: FileHistory[] | undefined, sortField: SortField, sortOrder: SortOrder) => {
+    if (!files) return [];
+
+    return [...files].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'fileName':
+          aValue = a.fileName.toLowerCase();
+          bValue = b.fileName.toLowerCase();
+          break;
+        case 'payerName':
+          aValue = a.bucket.payerName.toLowerCase();
+          bValue = b.bucket.payerName.toLowerCase();
+          break;
+        case 'deliveryStatus':
+          aValue = a.deliveryStatus;
+          bValue = b.deliveryStatus;
+          break;
+        case 'generatedAt':
+          aValue = new Date(a.generatedAt).getTime();
+          bValue = new Date(b.generatedAt).getTime();
+          break;
+        case 'retryCount':
+          aValue = a.retryCount;
+          bValue = b.retryCount;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  // Sorted pending files
+  const sortedPendingFiles = useMemo(() => {
+    return sortFiles(pendingFiles, pendingSortField, pendingSortOrder);
+  }, [pendingFiles, pendingSortField, pendingSortOrder]);
+
+  // Sorted failed files
+  const sortedFailedFiles = useMemo(() => {
+    return sortFiles(failedFiles, failedSortField, failedSortOrder);
+  }, [failedFiles, failedSortField, failedSortOrder]);
+
+  // Handle sorting for pending deliveries
+  const handlePendingSort = (field: SortField) => {
+    if (pendingSortField === field) {
+      setPendingSortOrder(pendingSortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setPendingSortField(field);
+      setPendingSortOrder('asc');
+    }
+  };
+
+  // Handle sorting for failed deliveries
+  const handleFailedSort = (field: SortField) => {
+    if (failedSortField === field) {
+      setFailedSortOrder(failedSortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setFailedSortField(field);
+      setFailedSortOrder('asc');
+    }
+  };
 
   if (pendingLoading || failedLoading) {
     return (
@@ -336,17 +417,57 @@ const DeliveryTracking: React.FC = () => {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell><strong>File Name</strong></TableCell>
-                  <TableCell><strong>Payer / Payee</strong></TableCell>
-                  <TableCell><strong>Status</strong></TableCell>
-                  <TableCell><strong>Generated</strong></TableCell>
-                  <TableCell><strong>Retry Count</strong></TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={pendingSortField === 'fileName'}
+                      direction={pendingSortField === 'fileName' ? pendingSortOrder : 'asc'}
+                      onClick={() => handlePendingSort('fileName')}
+                    >
+                      <strong>File Name</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={pendingSortField === 'payerName'}
+                      direction={pendingSortField === 'payerName' ? pendingSortOrder : 'asc'}
+                      onClick={() => handlePendingSort('payerName')}
+                    >
+                      <strong>Payer / Payee</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={pendingSortField === 'deliveryStatus'}
+                      direction={pendingSortField === 'deliveryStatus' ? pendingSortOrder : 'asc'}
+                      onClick={() => handlePendingSort('deliveryStatus')}
+                    >
+                      <strong>Status</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={pendingSortField === 'generatedAt'}
+                      direction={pendingSortField === 'generatedAt' ? pendingSortOrder : 'asc'}
+                      onClick={() => handlePendingSort('generatedAt')}
+                    >
+                      <strong>Generated</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={pendingSortField === 'retryCount'}
+                      direction={pendingSortField === 'retryCount' ? pendingSortOrder : 'asc'}
+                      onClick={() => handlePendingSort('retryCount')}
+                    >
+                      <strong>Retry Count</strong>
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell align="center"><strong>Actions</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {pendingFiles && pendingFiles.length > 0 ? (
-                  pendingFiles.map((file) => (
+                {sortedPendingFiles.length > 0 ? (
+                  sortedPendingFiles.map((file) => (
                     <TableRow key={file.fileId}>
                       <TableCell>
                         <Typography variant="body2" fontFamily="monospace">
@@ -415,17 +536,49 @@ const DeliveryTracking: React.FC = () => {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell><strong>File Name</strong></TableCell>
-                  <TableCell><strong>Payer / Payee</strong></TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={failedSortField === 'fileName'}
+                      direction={failedSortField === 'fileName' ? failedSortOrder : 'asc'}
+                      onClick={() => handleFailedSort('fileName')}
+                    >
+                      <strong>File Name</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={failedSortField === 'payerName'}
+                      direction={failedSortField === 'payerName' ? failedSortOrder : 'asc'}
+                      onClick={() => handleFailedSort('payerName')}
+                    >
+                      <strong>Payer / Payee</strong>
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell><strong>Error Message</strong></TableCell>
-                  <TableCell><strong>Generated</strong></TableCell>
-                  <TableCell><strong>Retry Count</strong></TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={failedSortField === 'generatedAt'}
+                      direction={failedSortField === 'generatedAt' ? failedSortOrder : 'asc'}
+                      onClick={() => handleFailedSort('generatedAt')}
+                    >
+                      <strong>Generated</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={failedSortField === 'retryCount'}
+                      direction={failedSortField === 'retryCount' ? failedSortOrder : 'asc'}
+                      onClick={() => handleFailedSort('retryCount')}
+                    >
+                      <strong>Retry Count</strong>
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell align="center" width="120"><strong>Actions</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {failedFiles && failedFiles.length > 0 ? (
-                  failedFiles.map((file) => (
+                {sortedFailedFiles.length > 0 ? (
+                  sortedFailedFiles.map((file) => (
                     <TableRow key={file.fileId}>
                       <TableCell>
                         <Typography variant="body2" fontFamily="monospace">

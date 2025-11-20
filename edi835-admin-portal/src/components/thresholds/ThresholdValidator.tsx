@@ -154,12 +154,15 @@ const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
     }
 
     // Check for conflicting thresholds on the same rule
-    if (threshold.linkedBucketingRule?.ruleId && existingThresholds.length > 0) {
+    const linkedRuleId = threshold.linkedBucketingRule?.id || threshold.linkedBucketingRule?.ruleId;
+    if (linkedRuleId && existingThresholds.length > 0) {
       const conflictingThresholds = existingThresholds.filter(
-        (t) =>
-          t.linkedBucketingRule?.ruleId === threshold.linkedBucketingRule?.ruleId &&
-          t.thresholdId !== threshold.thresholdId &&
-          t.isActive
+        (t) => {
+          const tRuleId = t.linkedBucketingRule?.id || t.linkedBucketingRule?.ruleId;
+          return tRuleId === linkedRuleId &&
+            t.thresholdId !== threshold.thresholdId &&
+            t.isActive;
+        }
       );
 
       if (conflictingThresholds.length > 0) {
@@ -172,7 +175,11 @@ const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
     }
 
     // Helpful info messages
-    if (!threshold.linkedBucketingRule?.ruleId) {
+    // Only show global threshold message if no bucketing rule is linked
+    const hasLinkedRule = threshold.linkedBucketingRule &&
+      (threshold.linkedBucketingRule.id || threshold.linkedBucketingRule.ruleId);
+
+    if (!hasLinkedRule) {
       info.push({
         severity: 'info',
         message: 'This threshold will apply to all bucketing rules (global threshold)',

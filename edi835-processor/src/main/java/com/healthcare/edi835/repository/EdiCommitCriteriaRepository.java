@@ -17,8 +17,10 @@ public interface EdiCommitCriteriaRepository extends JpaRepository<EdiCommitCrit
 
     /**
      * Finds commit criteria for a specific bucketing rule.
+     * Returns a list to handle cases where multiple active criteria exist (configuration error).
+     * Should return at most one result under normal circumstances.
      */
-    Optional<EdiCommitCriteria> findByLinkedBucketingRuleAndIsActiveTrue(EdiBucketingRule rule);
+    List<EdiCommitCriteria> findByLinkedBucketingRuleAndIsActiveTrue(EdiBucketingRule rule);
 
     /**
      * Finds criteria by commit mode.

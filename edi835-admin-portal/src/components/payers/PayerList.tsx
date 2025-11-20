@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -21,6 +21,7 @@ import {
   TextField,
   Tooltip,
   Typography,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,6 +35,9 @@ import { configurationService } from '../../services/configurationService';
 import { toast } from 'react-toastify';
 import PayerForm from './PayerForm';
 
+type SortField = 'payerId' | 'payerName' | 'isaSenderId' | 'gsApplicationSenderId' | 'sftpHost' | 'isActive';
+type SortOrder = 'asc' | 'desc';
+
 const PayerList: React.FC = () => {
   const [payers, setPayers] = useState<Payer[]>([]);
   const [filteredPayers, setFilteredPayers] = useState<Payer[]>([]);
@@ -43,6 +47,8 @@ const PayerList: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [payerToDelete, setPayerToDelete] = useState<Payer | null>(null);
+  const [sortField, setSortField] = useState<SortField>('payerName');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   useEffect(() => {
     loadPayers();
@@ -62,6 +68,58 @@ const PayerList: React.FC = () => {
       setFilteredPayers(filtered);
     }
   }, [searchQuery, payers]);
+
+  // Sort payers based on current sort field and order
+  const sortedPayers = useMemo(() => {
+    return [...filteredPayers].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'payerId':
+          aValue = a.payerId.toLowerCase();
+          bValue = b.payerId.toLowerCase();
+          break;
+        case 'payerName':
+          aValue = a.payerName.toLowerCase();
+          bValue = b.payerName.toLowerCase();
+          break;
+        case 'isaSenderId':
+          aValue = a.isaSenderId?.toLowerCase() || '';
+          bValue = b.isaSenderId?.toLowerCase() || '';
+          break;
+        case 'gsApplicationSenderId':
+          aValue = a.gsApplicationSenderId?.toLowerCase() || '';
+          bValue = b.gsApplicationSenderId?.toLowerCase() || '';
+          break;
+        case 'sftpHost':
+          aValue = a.sftpHost?.toLowerCase() || '';
+          bValue = b.sftpHost?.toLowerCase() || '';
+          break;
+        case 'isActive':
+          aValue = a.isActive ? 1 : 0;
+          bValue = b.isActive ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredPayers, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   const loadPayers = async () => {
     setLoading(true);
@@ -162,12 +220,60 @@ const PayerList: React.FC = () => {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Payer ID</TableCell>
-              <TableCell>Payer Name</TableCell>
-              <TableCell>ISA Sender ID</TableCell>
-              <TableCell>GS App Sender ID</TableCell>
-              <TableCell>SFTP Host</TableCell>
-              <TableCell align="center">Status</TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={sortField === 'payerId'}
+                  direction={sortField === 'payerId' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('payerId')}
+                >
+                  Payer ID
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={sortField === 'payerName'}
+                  direction={sortField === 'payerName' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('payerName')}
+                >
+                  Payer Name
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={sortField === 'isaSenderId'}
+                  direction={sortField === 'isaSenderId' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('isaSenderId')}
+                >
+                  ISA Sender ID
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={sortField === 'gsApplicationSenderId'}
+                  direction={sortField === 'gsApplicationSenderId' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('gsApplicationSenderId')}
+                >
+                  GS App Sender ID
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={sortField === 'sftpHost'}
+                  direction={sortField === 'sftpHost' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('sftpHost')}
+                >
+                  SFTP Host
+                </TableSortLabel>
+              </TableCell>
+              <TableCell align="center">
+                <TableSortLabel
+                  active={sortField === 'isActive'}
+                  direction={sortField === 'isActive' ? sortOrder : 'asc'}
+                  onClick={() => handleSort('isActive')}
+                >
+                  Status
+                </TableSortLabel>
+              </TableCell>
               <TableCell align="center">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -178,14 +284,14 @@ const PayerList: React.FC = () => {
                   Loading payers...
                 </TableCell>
               </TableRow>
-            ) : filteredPayers.length === 0 ? (
+            ) : sortedPayers.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} align="center">
                   {searchQuery ? 'No payers found matching your search' : 'No payers configured yet'}
                 </TableCell>
               </TableRow>
             ) : (
-              filteredPayers.map((payer) => (
+              sortedPayers.map((payer) => (
                 <TableRow key={payer.id} hover>
                   <TableCell>
                     <Typography variant="body2" fontWeight="bold">

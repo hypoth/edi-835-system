@@ -2,6 +2,7 @@ package com.healthcare.edi835.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -88,6 +89,7 @@ public class EdiFileBucket {
     private LocalDateTime createdAt = LocalDateTime.now();
 
     @Column(name = "last_updated")
+    @JsonProperty("updatedAt")
     @Builder.Default
     private LocalDateTime lastUpdated = LocalDateTime.now();
 

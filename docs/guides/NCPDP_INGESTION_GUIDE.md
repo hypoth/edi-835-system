@@ -791,7 +791,7 @@ SE*...*
 - **Project Documentation**: `/docs/NCPDP_INTEGRATION_PLAN.md`
 - **API Documentation**: `http://localhost:8080/api/v1/swagger-ui.html` (if Swagger enabled)
 - **Application Logs**: `logs/edi835-processor.log`
-- **Database Schema**: `database/migrations/002_create_ncpdp_raw_claims.sql`
+- **Database Schema**: `database/schema.sql` (NCPDP tables: ncpdp_raw_claims, ncpdp_processing_log)
 
 ---
 

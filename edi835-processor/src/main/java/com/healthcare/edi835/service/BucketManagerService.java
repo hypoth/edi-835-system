@@ -201,17 +201,26 @@ public class BucketManagerService {
      */
     private void handleThresholdMet(EdiFileBucket bucket, EdiGenerationThreshold threshold) {
         // Get commit criteria for this bucket's rule
-        Optional<EdiCommitCriteria> criteriaOpt = commitCriteriaRepository
+        List<EdiCommitCriteria> criteriaList = commitCriteriaRepository
                 .findByLinkedBucketingRuleAndIsActiveTrue(bucket.getBucketingRule());
 
-        if (criteriaOpt.isEmpty()) {
+        if (criteriaList.isEmpty()) {
             log.warn("No commit criteria found for bucket {}, defaulting to AUTO mode",
                     bucket.getBucketId());
             transitionToGeneration(bucket);
             return;
         }
 
-        EdiCommitCriteria criteria = criteriaOpt.get();
+        // Handle case where multiple active criteria exist (configuration error)
+        if (criteriaList.size() > 1) {
+            log.warn("Multiple active commit criteria found for bucket {} (rule: {}). Found {} criteria. Using first match: {}",
+                    bucket.getBucketId(),
+                    bucket.getBucketingRule() != null ? bucket.getBucketingRule().getRuleName() : "NULL",
+                    criteriaList.size(),
+                    criteriaList.get(0).getCriteriaName());
+        }
+
+        EdiCommitCriteria criteria = criteriaList.get(0);
 
         // Determine action based on commit mode
         switch (criteria.getCommitMode()) {

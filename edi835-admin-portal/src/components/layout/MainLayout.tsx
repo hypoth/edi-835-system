@@ -100,11 +100,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         },
         {
           text: 'Thresholds',
-          icon: <SpeedIcon />,
-          path: '/config/thresholds',
-        },
-        {
-          text: 'Thresholds (Enhanced)',
           icon: <DashboardSpeedIcon />,
           path: '/config/thresholds-enhanced',
         },

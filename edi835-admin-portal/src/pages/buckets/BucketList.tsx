@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Chip,
   IconButton,
   TextField,
@@ -35,12 +36,47 @@ const BucketList: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<BucketStatus | ''>('');
   const [payerFilter, setPayerFilter] = useState('');
   const [payeeFilter, setPayeeFilter] = useState('');
+  const [orderBy, setOrderBy] = useState<keyof Bucket>('createdAt');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
 
   // Fetch buckets
   const { data: buckets, isLoading, refetch } = useQuery<Bucket[]>({
     queryKey: ['buckets', statusFilter],
     queryFn: () => bucketService.getAllBuckets(statusFilter as BucketStatus),
   });
+
+  // Sorting comparator
+  const getComparator = (order: 'asc' | 'desc', orderBy: keyof Bucket) => {
+    return (a: Bucket, b: Bucket) => {
+      let aValue: any = a[orderBy];
+      let bValue: any = b[orderBy];
+
+      // Handle different data types
+      if (orderBy === 'createdAt') {
+        aValue = new Date(aValue as string).getTime();
+        bValue = new Date(bValue as string).getTime();
+      }
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return order === 'asc'
+          ? aValue.localeCompare(bValue)
+          : bValue.localeCompare(aValue);
+      }
+
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return order === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+
+      return 0;
+    };
+  };
+
+  // Handle sort request
+  const handleSort = (property: keyof Bucket) => {
+    const isAsc = orderBy === property && order === 'asc';
+    setOrder(isAsc ? 'desc' : 'asc');
+    setOrderBy(property);
+  };
 
   // Get status color
   const getStatusColor = (status: BucketStatus): 'default' | 'primary' | 'warning' | 'info' | 'success' | 'error' => {
@@ -88,6 +124,9 @@ const BucketList: React.FC = () => {
     const matchesPayee = !payeeFilter || bucket.payeeName.toLowerCase().includes(payeeFilter.toLowerCase());
     return matchesPayer && matchesPayee;
   });
+
+  // Sort filtered buckets
+  const sortedBuckets = filteredBuckets?.slice().sort(getComparator(order, orderBy));
 
   if (isLoading) {
     return (
@@ -179,19 +218,75 @@ const BucketList: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>Bucket ID</strong></TableCell>
-                <TableCell><strong>Payer</strong></TableCell>
-                <TableCell><strong>Payee</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
-                <TableCell align="right"><strong>Claims</strong></TableCell>
-                <TableCell align="right"><strong>Amount</strong></TableCell>
-                <TableCell><strong>Created</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'bucketId'}
+                    direction={orderBy === 'bucketId' ? order : 'asc'}
+                    onClick={() => handleSort('bucketId')}
+                  >
+                    <strong>Bucket ID</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'payerName'}
+                    direction={orderBy === 'payerName' ? order : 'asc'}
+                    onClick={() => handleSort('payerName')}
+                  >
+                    <strong>Payer</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'payeeName'}
+                    direction={orderBy === 'payeeName' ? order : 'asc'}
+                    onClick={() => handleSort('payeeName')}
+                  >
+                    <strong>Payee</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'status'}
+                    direction={orderBy === 'status' ? order : 'asc'}
+                    onClick={() => handleSort('status')}
+                  >
+                    <strong>Status</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={orderBy === 'claimCount'}
+                    direction={orderBy === 'claimCount' ? order : 'asc'}
+                    onClick={() => handleSort('claimCount')}
+                  >
+                    <strong>Claims</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={orderBy === 'totalAmount'}
+                    direction={orderBy === 'totalAmount' ? order : 'asc'}
+                    onClick={() => handleSort('totalAmount')}
+                  >
+                    <strong>Amount</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={orderBy === 'createdAt'}
+                    direction={orderBy === 'createdAt' ? order : 'asc'}
+                    onClick={() => handleSort('createdAt')}
+                  >
+                    <strong>Created</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredBuckets && filteredBuckets.length > 0 ? (
-                filteredBuckets.map((bucket) => (
+              {sortedBuckets && sortedBuckets.length > 0 ? (
+                sortedBuckets.map((bucket) => (
                   <TableRow key={bucket.bucketId} hover>
                     <TableCell>
                       <Typography variant="body2" fontFamily="monospace">

@@ -379,22 +379,22 @@ VALUES
     -- Production-like sample payers
     ('550e8400-e29b-41d4-a716-446655440001', 'BCBS001', 'Blue Cross Blue Shield', 'ZZ', 'BCBS001ISA', 'BCBS001GS',
      '123 Insurance Way', 'Chicago', 'IL', '60601',
-     'sftp.bcbs.com', 22, 'edi_user', NULL, '/inbound/835',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
      0, 1, 'system'),
 
     ('550e8400-e29b-41d4-a716-446655440002', 'UHC001', 'UnitedHealthcare', 'ZZ', 'UHC001ISA', 'UHC001GS',
      '456 Health Plaza', 'Minneapolis', 'MN', '55401',
-     'sftp.uhc.com', 22, 'edi_user', NULL, '/edi/835',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
      0, 1, 'system'),
 
     ('550e8400-e29b-41d4-a716-446655440003', 'AETNA001', 'Aetna Insurance', 'ZZ', 'AETNA001ISA', 'AETNA001GS',
      '789 Medical Drive', 'Hartford', 'CT', '06156',
-     'sftp.aetna.com', 22, 'edi_user', NULL, '/remittance/835',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
      0, 1, 'system'),
 
     ('550e8400-e29b-41d4-a716-446655440004', 'CIGNA001', 'Cigna Health', 'ZZ', 'CIGNA001ISA', 'CIGNA001GS',
      '900 Coverage Street', 'Bloomfield', 'CT', '06002',
-     NULL, NULL, NULL, NULL, NULL,
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
      0, 1, 'system');
 
 -- =========================
@@ -439,81 +439,14 @@ VALUES
 INSERT OR IGNORE INTO edi_bucketing_rules (id, rule_name, rule_type, grouping_expression, priority,
     linked_payer_id, linked_payee_id, description, is_active, created_by)
 VALUES
-    -- High-priority rule for specific payer-payee combination (used in test scripts)
-    ('770e8400-e29b-41d4-a716-446655440000', 'BCBS - General Hospital', 'PAYER_PAYEE', NULL, 100,
-     NULL, NULL, 'Default rule for BCBS and General Hospital combination', 1, 'system'),
-
     -- Default payer/payee bucketing (most common)
-    ('770e8400-e29b-41d4-a716-446655440001', 'Default Payer/Payee Bucketing', 'PAYER_PAYEE', NULL, 1,
+    ('770e8400-e29b-41d4-a716-446655440001', 'Default Payer/Payee Bucketing', 'PAYER_PAYEE', NULL, 2,
      NULL, NULL, 'Groups claims by payer and payee combination', 1, 'system'),
 
     -- BIN/PCN based bucketing for pharmacy claims
-    ('770e8400-e29b-41d4-a716-446655440002', 'BIN/PCN Grouping', 'BIN_PCN', NULL, 2,
+    ('770e8400-e29b-41d4-a716-446655440002', 'BIN/PCN Grouping', 'BIN_PCN', NULL, 1,
      NULL, NULL, 'Groups claims by insurance BIN and PCN numbers', 1, 'system');
 
--- =========================
--- EDI GENERATION THRESHOLDS
--- =========================
--- Define when buckets should trigger EDI file generation
-
-INSERT OR IGNORE INTO edi_generation_thresholds (id, threshold_name, threshold_type,
-    max_claims, max_amount, time_duration, generation_schedule, linked_bucketing_rule_id, is_active, created_by)
-VALUES
-    -- Claim count threshold (triggers at 5 claims)
-    ('7a0e8400-e29b-41d4-a716-446655440001', 'Daily Claim Count', 'CLAIM_COUNT', 5, NULL, 'DAILY', NULL,
-     '770e8400-e29b-41d4-a716-446655440001', 1, 'system'),
-
-    -- Time-based threshold (weekly batch)
-    ('7a0e8400-e29b-41d4-a716-446655440003', 'Weekly Batch', 'TIME', NULL, NULL, 'WEEKLY', NULL,
-     '770e8400-e29b-41d4-a716-446655440002', 1, 'system'),
-
-    -- Amount threshold (triggers at $5000)
-    ('d5c45061-053a-4ff8-8b51-4f9e082c65bd', 'BCBS - General Hospital', 'AMOUNT', NULL, 5000.0, NULL, NULL,
-     '770e8400-e29b-41d4-a716-446655440000', 1, 'system');
-
--- =========================
--- EDI COMMIT CRITERIA
--- =========================
--- Define approval workflows and automatic file generation rules
-
-INSERT OR IGNORE INTO edi_commit_criteria (id, criteria_name, commit_mode,
-    auto_commit_threshold, manual_approval_threshold, approval_required_roles, override_permissions,
-    linked_bucketing_rule_id, is_active, created_by)
-VALUES
-    -- AUTO mode: Generate automatically when thresholds are met
-    -- auto_commit_threshold = amount threshold ($500)
-    -- manual_approval_threshold = claim count threshold (10 claims)
-    ('7b0e8400-e29b-41d4-a716-446655440001', 'Auto Commit Small Batches', 'AUTO', 500, 10, NULL, NULL,
-     NULL, 1, 'system'),
-
-    -- MANUAL mode: Always require approval before generation
-    ('7b0e8400-e29b-41d4-a716-446655440002', 'Manual Approval Required', 'MANUAL', NULL, NULL,
-     '["OPERATIONS_MANAGER","FINANCE_ADMIN"]', NULL,
-     NULL, 1, 'system'),
-
-    -- HYBRID mode: Auto-generate below threshold, require approval above
-    -- auto_commit_threshold = amount threshold ($5000)
-    -- manual_approval_threshold = claim count threshold (10 claims)
-    ('e887965a-0957-4036-94ea-7c0afefb2363', 'BCBS hybrid commit', 'HYBRID', 5000, 10,
-     '["ADMIN"]', NULL,
-     '770e8400-e29b-41d4-a716-446655440000', 1, 'system');
-
--- =========================
--- EDI FILE NAMING TEMPLATES
--- =========================
--- Define how generated EDI files should be named
-
-INSERT OR IGNORE INTO edi_file_naming_templates (id, template_name, template_pattern,
-    date_format, time_format, sequence_padding, case_conversion, separator_type, is_default,
-    linked_bucketing_rule_id, version, created_by)
-VALUES
-    -- Default template (most commonly used)
-    ('880e8400-e29b-41d4-a716-446655440001', 'Standard EDI 835', '{payerId}_{payeeId}_{date}_{sequenceNumber}.835',
-     'yyyyMMdd', 'HHmmss', 4, 'UPPER', '_', 1, NULL, 1, 'system'),
-
-    -- Detailed format with time component
-    ('880e8400-e29b-41d4-a716-446655440002', 'Detailed Format', 'EDI835_{payerId}_{date}_{time}_SEQ{sequenceNumber}.txt',
-     'yyyy-MM-dd', 'HHmmss', 6, 'UPPER', '_', 0, NULL, 1, 'system');
 
 -- =========================
 -- ADJUSTMENT CODE MAPPINGS
@@ -623,6 +556,56 @@ CREATE TABLE IF NOT EXISTS ncpdp_processing_log (
 CREATE INDEX IF NOT EXISTS idx_ncpdp_log_claim ON ncpdp_processing_log(ncpdp_claim_id);
 CREATE INDEX IF NOT EXISTS idx_ncpdp_log_status ON ncpdp_processing_log(status);
 CREATE INDEX IF NOT EXISTS idx_ncpdp_log_created ON ncpdp_processing_log(created_date DESC);
+
+-- ===========================================================================
+-- SEED DATA - Configuration Records
+-- ===========================================================================
+-- This section contains default configuration data that should be present
+-- in every new database instance. These records are required for the
+-- admin portal to function correctly.
+--
+-- IMPORTANT: These records have dependencies:
+-- 1. edi_bucketing_rules (must be inserted first - no dependencies)
+-- 2. edi_generation_thresholds (references edi_bucketing_rules)
+-- 3. edi_commit_criteria (references edi_bucketing_rules)
+-- ===========================================================================
+
+-- Bucketing Rules (2 default rules)
+INSERT OR IGNORE INTO edi_bucketing_rules (id, rule_name, rule_type, grouping_expression, priority, linked_payer_id, linked_payee_id, description, is_active, created_at, updated_at, created_by, updated_by)
+VALUES
+('770e8400-e29b-41d4-a716-446655440001', 'Default Payer/Payee Bucketing', 'PAYER_PAYEE', NULL, 2, NULL, NULL, 'Groups claims by payer and payee combination', 1, '2025-11-20 09:26:33', '2025-11-20 09:26:33', 'system', NULL),
+('770e8400-e29b-41d4-a716-446655440002', 'BIN/PCN Grouping', 'BIN_PCN', NULL, 1, NULL, NULL, 'Groups claims by insurance BIN and PCN numbers', 1, '2025-11-20 09:26:33', '2025-11-20 09:26:33', 'system', NULL);
+
+-- Generation Thresholds (3 default thresholds)
+INSERT OR IGNORE INTO edi_generation_thresholds (id, threshold_name, threshold_type, max_claims, max_amount, time_duration, generation_schedule, linked_bucketing_rule_id, is_active, created_at, updated_at, created_by, updated_by)
+VALUES
+('7a0e8400-e29b-41d4-a716-446655440001', 'Daily Claim Count', 'CLAIM_COUNT', 4, NULL, 'DAILY', NULL, '770e8400-e29b-41d4-a716-446655440001', 0, '2025-11-20 09:26:33', '2025-11-20 10:56:52', 'system', NULL),
+('7a0e8400-e29b-41d4-a716-446655440003', 'Weekly Batch', 'TIME', NULL, NULL, 'WEEKLY', NULL, '770e8400-e29b-41d4-a716-446655440002', 1, '2025-11-20 09:26:33', '2025-11-20 09:26:33', 'system', NULL),
+('49ba75a6-7fff-420b-9af5-e57b20d952cf', 'Quick Daily Batch', 'HYBRID', 6, 1000.0, 'DAILY', NULL, '770e8400-e29b-41d4-a716-446655440001', 1, 1763636337501, '2025-11-20 12:05:44', NULL, NULL);
+
+-- Commit Criteria (3 default criteria)
+INSERT OR IGNORE INTO edi_commit_criteria (id, criteria_name, commit_mode, auto_commit_threshold, manual_approval_threshold, approval_required_roles, override_permissions, linked_bucketing_rule_id, is_active, created_at, updated_at, created_by, updated_by)
+VALUES
+('7b0e8400-e29b-41d4-a716-446655440001', 'Auto Commit Small Batches', 'AUTO', 5000, 3, NULL, NULL, '770e8400-e29b-41d4-a716-446655440001', 0, '2025-11-20 09:26:33', '2025-11-20 11:49:33', 'system', NULL),
+('7b0e8400-e29b-41d4-a716-446655440002', 'Manual Approval Required', 'MANUAL', NULL, NULL, '["OPERATIONS_MANAGER","FINANCE_ADMIN"]', NULL, '770e8400-e29b-41d4-a716-446655440002', 1, '2025-11-20 09:26:33', '2025-11-20 09:26:33', 'system', NULL),
+('6401826c-752f-4979-9377-bcb3925e760d', 'Manual_Payer_Payee', 'MANUAL', NULL, NULL, '["ADMIN"]', NULL, '770e8400-e29b-41d4-a716-446655440001', 1, 1763639355402, 1763639355402, NULL, NULL);
+
+-- =========================
+-- EDI FILE NAMING TEMPLATES
+-- =========================
+-- Define how generated EDI files should be named
+
+INSERT OR IGNORE INTO edi_file_naming_templates (id, template_name, template_pattern,
+    date_format, time_format, sequence_padding, case_conversion, separator_type, is_default,
+    linked_bucketing_rule_id, version, created_by)
+VALUES
+    -- Default template (most commonly used)
+    ('880e8400-e29b-41d4-a716-446655440001', 'Standard EDI 835', '{payerId}_{payeeId}_{date}_{sequenceNumber}.835',
+     'yyyyMMdd', 'HHmmss', 4, 'UPPER', '_', 1, NULL, 1, 'system'),
+
+    -- Detailed format with time component
+    ('880e8400-e29b-41d4-a716-446655440002', 'Detailed Format', 'EDI835_{payerId}_{date}_{time}_SEQ{sequenceNumber}.txt',
+     'yyyy-MM-dd', 'HHmmss', 6, 'UPPER', '_', 0, NULL, 1, 'system');
 
 -- ===========================================================================
 -- NOTES

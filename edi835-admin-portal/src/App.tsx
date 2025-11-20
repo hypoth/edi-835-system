@@ -19,7 +19,6 @@ import DeliveryTracking from './pages/delivery/DeliveryTracking';
 import PayersConfig from './pages/config/PayersConfig';
 import PayeesConfig from './pages/config/PayeesConfig';
 import BucketingRulesConfig from './pages/config/BucketingRulesConfig';
-import ThresholdsConfig from './pages/config/ThresholdsConfig';
 import ThresholdsConfigEnhanced from './pages/config/ThresholdsConfigEnhanced';
 import CommitCriteriaConfig from './pages/config/CommitCriteriaConfig';
 import FileNamingTemplatesConfig from './pages/config/FileNamingTemplatesConfig';
@@ -110,7 +109,6 @@ const App: React.FC = () => {
               <Route path="/config/payers" element={<PayersConfig />} />
               <Route path="/config/payees" element={<PayeesConfig />} />
               <Route path="/config/rules" element={<BucketingRulesConfig />} />
-              <Route path="/config/thresholds" element={<ThresholdsConfig />} />
               <Route path="/config/thresholds-enhanced" element={<ThresholdsConfigEnhanced />} />
               <Route path="/config/criteria" element={<CommitCriteriaConfig />} />
               <Route path="/config/templates" element={<FileNamingTemplatesConfig />} />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -27,6 +27,7 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -74,6 +75,9 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+type SortField = 'thresholdName' | 'thresholdType' | 'maxClaims' | 'maxAmount' | 'timeDuration' | 'linkedRule' | 'isActive';
+type SortOrder = 'asc' | 'desc';
+
 const ThresholdsConfigEnhanced: React.FC = () => {
   const queryClient = useQueryClient();
   const [currentTab, setCurrentTab] = useState(0);
@@ -85,6 +89,8 @@ const ThresholdsConfigEnhanced: React.FC = () => {
   const [selectedThresholds, setSelectedThresholds] = useState<string[]>([]);
   const [bulkMenuAnchor, setBulkMenuAnchor] = useState<null | HTMLElement>(null);
   const [dialogStep, setDialogStep] = useState(0); // 0: Type, 1: Form, 2: Preview, 3: Test
+  const [sortField, setSortField] = useState<SortField>('thresholdName');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   const [formData, setFormData] = useState<Partial<GenerationThreshold>>({
     thresholdName: '',
@@ -112,6 +118,64 @@ const ThresholdsConfigEnhanced: React.FC = () => {
     queryKey: ['activeBuckets'],
     queryFn: bucketService.getActiveBuckets,
   });
+
+  // Sort thresholds based on current sort field and order
+  const sortedThresholds = useMemo(() => {
+    if (!thresholds) return [];
+
+    return [...thresholds].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'thresholdName':
+          aValue = a.thresholdName.toLowerCase();
+          bValue = b.thresholdName.toLowerCase();
+          break;
+        case 'thresholdType':
+          aValue = a.thresholdType;
+          bValue = b.thresholdType;
+          break;
+        case 'maxClaims':
+          aValue = a.maxClaims || 0;
+          bValue = b.maxClaims || 0;
+          break;
+        case 'maxAmount':
+          aValue = a.maxAmount || 0;
+          bValue = b.maxAmount || 0;
+          break;
+        case 'timeDuration':
+          aValue = a.timeDuration?.toLowerCase() || '';
+          bValue = b.timeDuration?.toLowerCase() || '';
+          break;
+        case 'linkedRule':
+          aValue = a.linkedBucketingRule?.ruleName?.toLowerCase() || '';
+          bValue = b.linkedBucketingRule?.ruleName?.toLowerCase() || '';
+          break;
+        case 'isActive':
+          aValue = a.isActive ? 1 : 0;
+          bValue = b.isActive ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [thresholds, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Create mutation
   const createMutation = useMutation({
@@ -247,10 +311,10 @@ const ThresholdsConfigEnhanced: React.FC = () => {
   };
 
   const handleSelectAll = () => {
-    if (selectedThresholds.length === thresholds?.length) {
+    if (selectedThresholds.length === sortedThresholds.length) {
       setSelectedThresholds([]);
     } else {
-      setSelectedThresholds(thresholds?.map((t) => t.thresholdId) || []);
+      setSelectedThresholds(sortedThresholds.map((t) => t.thresholdId));
     }
   };
 
@@ -387,27 +451,83 @@ const ThresholdsConfigEnhanced: React.FC = () => {
                 <TableRow>
                   <TableCell padding="checkbox">
                     <Checkbox
-                      checked={selectedThresholds.length === thresholds?.length}
+                      checked={sortedThresholds.length > 0 && selectedThresholds.length === sortedThresholds.length}
                       indeterminate={
                         selectedThresholds.length > 0 &&
-                        selectedThresholds.length < (thresholds?.length || 0)
+                        selectedThresholds.length < sortedThresholds.length
                       }
                       onChange={handleSelectAll}
                     />
                   </TableCell>
-                  <TableCell><strong>Threshold Name</strong></TableCell>
-                  <TableCell><strong>Type</strong></TableCell>
-                  <TableCell><strong>Max Claims</strong></TableCell>
-                  <TableCell><strong>Max Amount</strong></TableCell>
-                  <TableCell><strong>Time Duration</strong></TableCell>
-                  <TableCell><strong>Linked Rule</strong></TableCell>
-                  <TableCell><strong>Status</strong></TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'thresholdName'}
+                      direction={sortField === 'thresholdName' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('thresholdName')}
+                    >
+                      <strong>Threshold Name</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'thresholdType'}
+                      direction={sortField === 'thresholdType' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('thresholdType')}
+                    >
+                      <strong>Type</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'maxClaims'}
+                      direction={sortField === 'maxClaims' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('maxClaims')}
+                    >
+                      <strong>Max Claims</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'maxAmount'}
+                      direction={sortField === 'maxAmount' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('maxAmount')}
+                    >
+                      <strong>Max Amount</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'timeDuration'}
+                      direction={sortField === 'timeDuration' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('timeDuration')}
+                    >
+                      <strong>Time Duration</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'linkedRule'}
+                      direction={sortField === 'linkedRule' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('linkedRule')}
+                    >
+                      <strong>Linked Rule</strong>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell>
+                    <TableSortLabel
+                      active={sortField === 'isActive'}
+                      direction={sortField === 'isActive' ? sortOrder : 'asc'}
+                      onClick={() => handleSort('isActive')}
+                    >
+                      <strong>Status</strong>
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell align="center"><strong>Actions</strong></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {thresholds && thresholds.length > 0 ? (
-                  thresholds.map((threshold) => (
+                {sortedThresholds.length > 0 ? (
+                  sortedThresholds.map((threshold) => (
                     <TableRow key={threshold.thresholdId} hover>
                       <TableCell padding="checkbox">
                         <Checkbox

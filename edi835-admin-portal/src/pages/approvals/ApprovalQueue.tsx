@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -23,6 +23,7 @@ import {
   Tooltip,
   Alert,
   Grid,
+  TableSortLabel,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -36,6 +37,9 @@ import { approvalService } from '../../services/approvalService';
 import { Bucket } from '../../types/models';
 import { toast } from 'react-toastify';
 
+type SortField = 'bucketId' | 'payerName' | 'payeeName' | 'claimCount' | 'totalAmount' | 'awaitingApprovalSince';
+type SortOrder = 'asc' | 'desc';
+
 const ApprovalQueue: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -46,6 +50,8 @@ const ApprovalQueue: React.FC = () => {
   const [actionBy, setActionBy] = useState('');
   const [comments, setComments] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  const [sortField, setSortField] = useState<SortField>('awaitingApprovalSince');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   // Fetch pending approvals
   const { data: pendingBuckets, isLoading, refetch } = useQuery<Bucket[]>({
@@ -53,6 +59,60 @@ const ApprovalQueue: React.FC = () => {
     queryFn: approvalService.getPendingApprovals,
     refetchInterval: 15000, // Refresh every 15 seconds
   });
+
+  // Sort buckets based on current sort field and order
+  const sortedBuckets = useMemo(() => {
+    if (!pendingBuckets) return [];
+
+    return [...pendingBuckets].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'bucketId':
+          aValue = a.bucketId;
+          bValue = b.bucketId;
+          break;
+        case 'payerName':
+          aValue = a.payerName?.toLowerCase() || '';
+          bValue = b.payerName?.toLowerCase() || '';
+          break;
+        case 'payeeName':
+          aValue = a.payeeName?.toLowerCase() || '';
+          bValue = b.payeeName?.toLowerCase() || '';
+          break;
+        case 'claimCount':
+          aValue = a.claimCount;
+          bValue = b.claimCount;
+          break;
+        case 'totalAmount':
+          aValue = a.totalAmount;
+          bValue = b.totalAmount;
+          break;
+        case 'awaitingApprovalSince':
+          aValue = a.awaitingApprovalSince ? new Date(a.awaitingApprovalSince).getTime() : 0;
+          bValue = b.awaitingApprovalSince ? new Date(b.awaitingApprovalSince).getTime() : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [pendingBuckets, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Approve mutation
   const approveMutation = useMutation({
@@ -181,7 +241,7 @@ const ApprovalQueue: React.FC = () => {
 
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {
-      setSelectedBuckets(pendingBuckets?.map((b) => b.bucketId) || []);
+      setSelectedBuckets(sortedBuckets.map((b) => b.bucketId));
     } else {
       setSelectedBuckets([]);
     }
@@ -237,12 +297,12 @@ const ApprovalQueue: React.FC = () => {
       </Box>
 
       {/* Summary */}
-      {pendingBuckets && pendingBuckets.length > 0 && (
+      {sortedBuckets.length > 0 && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           <Typography variant="body2">
-            <strong>{pendingBuckets.length}</strong> bucket(s) awaiting approval •
-            Total Claims: <strong>{pendingBuckets.reduce((sum, b) => sum + b.claimCount, 0)}</strong> •
-            Total Amount: <strong>${pendingBuckets.reduce((sum, b) => sum + b.totalAmount, 0).toLocaleString()}</strong>
+            <strong>{sortedBuckets.length}</strong> bucket(s) awaiting approval •
+            Total Claims: <strong>{sortedBuckets.reduce((sum, b) => sum + b.claimCount, 0)}</strong> •
+            Total Amount: <strong>${sortedBuckets.reduce((sum, b) => sum + b.totalAmount, 0).toLocaleString()}</strong>
           </Typography>
         </Alert>
       )}
@@ -256,30 +316,76 @@ const ApprovalQueue: React.FC = () => {
                 <TableCell padding="checkbox">
                   <Checkbox
                     checked={
-                      pendingBuckets &&
-                      pendingBuckets.length > 0 &&
-                      selectedBuckets.length === pendingBuckets.length
+                      sortedBuckets.length > 0 &&
+                      selectedBuckets.length === sortedBuckets.length
                     }
                     indeterminate={
                       selectedBuckets.length > 0 &&
-                      pendingBuckets &&
-                      selectedBuckets.length < pendingBuckets.length
+                      selectedBuckets.length < sortedBuckets.length
                     }
                     onChange={handleSelectAll}
                   />
                 </TableCell>
-                <TableCell><strong>Bucket ID</strong></TableCell>
-                <TableCell><strong>Payer</strong></TableCell>
-                <TableCell><strong>Payee</strong></TableCell>
-                <TableCell align="right"><strong>Claims</strong></TableCell>
-                <TableCell align="right"><strong>Amount</strong></TableCell>
-                <TableCell><strong>Waiting Since</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'bucketId'}
+                    direction={sortField === 'bucketId' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('bucketId')}
+                  >
+                    <strong>Bucket ID</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'payerName'}
+                    direction={sortField === 'payerName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('payerName')}
+                  >
+                    <strong>Payer</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'payeeName'}
+                    direction={sortField === 'payeeName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('payeeName')}
+                  >
+                    <strong>Payee</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortField === 'claimCount'}
+                    direction={sortField === 'claimCount' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('claimCount')}
+                  >
+                    <strong>Claims</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortField === 'totalAmount'}
+                    direction={sortField === 'totalAmount' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('totalAmount')}
+                  >
+                    <strong>Amount</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'awaitingApprovalSince'}
+                    direction={sortField === 'awaitingApprovalSince' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('awaitingApprovalSince')}
+                  >
+                    <strong>Waiting Since</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {pendingBuckets && pendingBuckets.length > 0 ? (
-                pendingBuckets.map((bucket) => (
+              {sortedBuckets.length > 0 ? (
+                sortedBuckets.map((bucket) => (
                   <TableRow key={bucket.bucketId} hover>
                     <TableCell padding="checkbox">
                       <Checkbox

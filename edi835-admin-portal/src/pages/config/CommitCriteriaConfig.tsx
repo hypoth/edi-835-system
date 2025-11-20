@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -24,6 +24,7 @@ import {
   Chip,
   MenuItem,
   Alert,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -35,6 +36,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { configurationService } from '../../services/configurationService';
 import { CommitCriteria, CommitMode, BucketingRule } from '../../types/models';
 import { toast } from 'react-toastify';
+
+type SortField = 'criteriaName' | 'commitMode' | 'linkedRule' | 'approvalClaimCountThreshold' | 'approvalAmountThreshold' | 'isActive';
+type SortOrder = 'asc' | 'desc';
 
 const CommitCriteriaConfig: React.FC = () => {
   const queryClient = useQueryClient();
@@ -49,6 +53,8 @@ const CommitCriteriaConfig: React.FC = () => {
     approvalRoles: '',
     isActive: true,
   });
+  const [sortField, setSortField] = useState<SortField>('criteriaName');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   // Fetch commit criteria
   const { data: criteriaList, isLoading, refetch } = useQuery<CommitCriteria[]>({
@@ -61,6 +67,60 @@ const CommitCriteriaConfig: React.FC = () => {
     queryKey: ['bucketingRules'],
     queryFn: configurationService.getAllBucketingRules,
   });
+
+  // Sort commit criteria based on current sort field and order
+  const sortedCriteria = useMemo(() => {
+    if (!criteriaList) return [];
+
+    return [...criteriaList].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'criteriaName':
+          aValue = a.criteriaName.toLowerCase();
+          bValue = b.criteriaName.toLowerCase();
+          break;
+        case 'commitMode':
+          aValue = a.commitMode;
+          bValue = b.commitMode;
+          break;
+        case 'linkedRule':
+          aValue = a.linkedBucketingRuleName?.toLowerCase() || '';
+          bValue = b.linkedBucketingRuleName?.toLowerCase() || '';
+          break;
+        case 'approvalClaimCountThreshold':
+          aValue = a.approvalClaimCountThreshold || 0;
+          bValue = b.approvalClaimCountThreshold || 0;
+          break;
+        case 'approvalAmountThreshold':
+          aValue = a.approvalAmountThreshold || 0;
+          bValue = b.approvalAmountThreshold || 0;
+          break;
+        case 'isActive':
+          aValue = a.isActive ? 1 : 0;
+          bValue = b.isActive ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [criteriaList, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Create mutation
   const createMutation = useMutation({
@@ -282,19 +342,67 @@ const CommitCriteriaConfig: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>Criteria Name</strong></TableCell>
-                <TableCell><strong>Commit Mode</strong></TableCell>
-                <TableCell><strong>Linked Rule</strong></TableCell>
-                <TableCell><strong>Claim Threshold</strong></TableCell>
-                <TableCell><strong>Amount Threshold</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'criteriaName'}
+                    direction={sortField === 'criteriaName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('criteriaName')}
+                  >
+                    <strong>Criteria Name</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'commitMode'}
+                    direction={sortField === 'commitMode' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('commitMode')}
+                  >
+                    <strong>Commit Mode</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'linkedRule'}
+                    direction={sortField === 'linkedRule' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('linkedRule')}
+                  >
+                    <strong>Linked Rule</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'approvalClaimCountThreshold'}
+                    direction={sortField === 'approvalClaimCountThreshold' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('approvalClaimCountThreshold')}
+                  >
+                    <strong>Claim Threshold</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'approvalAmountThreshold'}
+                    direction={sortField === 'approvalAmountThreshold' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('approvalAmountThreshold')}
+                  >
+                    <strong>Amount Threshold</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell><strong>Approval Roles</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'isActive'}
+                    direction={sortField === 'isActive' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('isActive')}
+                  >
+                    <strong>Status</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {criteriaList && criteriaList.length > 0 ? (
-                criteriaList.map((criteria) => (
+              {sortedCriteria.length > 0 ? (
+                sortedCriteria.map((criteria) => (
                   <TableRow key={criteria.id || criteria.criteriaId} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600}>

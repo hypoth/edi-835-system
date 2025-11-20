@@ -256,6 +256,20 @@ public class ConfigurationController {
      * Convert EdiGenerationThreshold entity to DTO to avoid Hibernate proxy serialization issues.
      */
     private GenerationThresholdDTO convertThresholdToDTO(EdiGenerationThreshold threshold) {
+        // Build nested bucketing rule summary if linked rule exists
+        GenerationThresholdDTO.BucketingRuleSummary ruleSummary = null;
+        if (threshold.getLinkedBucketingRule() != null) {
+            EdiBucketingRule rule = threshold.getLinkedBucketingRule();
+            ruleSummary = GenerationThresholdDTO.BucketingRuleSummary.builder()
+                    .id(rule.getId())
+                    .ruleId(rule.getId().toString())
+                    .ruleName(rule.getRuleName())
+                    .ruleType(rule.getRuleType() != null ? rule.getRuleType().name() : null)
+                    .priority(rule.getPriority())
+                    .isActive(rule.getIsActive())
+                    .build();
+        }
+
         return GenerationThresholdDTO.builder()
                 .id(threshold.getId())
                 .thresholdName(threshold.getThresholdName())
@@ -264,6 +278,7 @@ public class ConfigurationController {
                 .maxAmount(threshold.getMaxAmount())
                 .timeDuration(threshold.getTimeDuration() != null ? threshold.getTimeDuration().name() : null)
                 .generationSchedule(threshold.getGenerationSchedule())
+                .linkedBucketingRule(ruleSummary)
                 .linkedBucketingRuleId(threshold.getLinkedBucketingRule() != null ?
                         threshold.getLinkedBucketingRule().getId() : null)
                 .linkedBucketingRuleName(threshold.getLinkedBucketingRule() != null ?
@@ -376,9 +391,57 @@ public class ConfigurationController {
 
     @PostMapping("/thresholds")
     public ResponseEntity<GenerationThresholdDTO> createThreshold(
-            @Valid @RequestBody EdiGenerationThreshold threshold) {
-        log.info("POST /api/v1/config/thresholds - Creating threshold: {}",
-                threshold.getThresholdName());
+            @Valid @RequestBody java.util.Map<String, Object> thresholdData) {
+        log.info("POST /api/v1/config/thresholds - Creating threshold");
+
+        EdiGenerationThreshold threshold = new EdiGenerationThreshold();
+
+        // Map basic fields
+        if (thresholdData.containsKey("thresholdName")) {
+            threshold.setThresholdName((String) thresholdData.get("thresholdName"));
+        }
+        if (thresholdData.containsKey("thresholdType")) {
+            threshold.setThresholdType(EdiGenerationThreshold.ThresholdType.valueOf((String) thresholdData.get("thresholdType")));
+        }
+        if (thresholdData.containsKey("maxClaims")) {
+            threshold.setMaxClaims((Integer) thresholdData.get("maxClaims"));
+        }
+        if (thresholdData.containsKey("maxAmount")) {
+            Object amountObj = thresholdData.get("maxAmount");
+            if (amountObj instanceof Number) {
+                threshold.setMaxAmount(new java.math.BigDecimal(amountObj.toString()));
+            }
+        }
+        if (thresholdData.containsKey("timeDuration")) {
+            threshold.setTimeDuration(EdiGenerationThreshold.TimeDuration.valueOf((String) thresholdData.get("timeDuration")));
+        }
+        if (thresholdData.containsKey("generationSchedule")) {
+            threshold.setGenerationSchedule((String) thresholdData.get("generationSchedule"));
+        }
+        if (thresholdData.containsKey("isActive")) {
+            threshold.setIsActive((Boolean) thresholdData.get("isActive"));
+        }
+
+        // Handle linked bucketing rule (can be nested object or just ID)
+        Object linkedRuleObj = thresholdData.get("linkedBucketingRule");
+        if (linkedRuleObj != null) {
+            UUID ruleId = null;
+            if (linkedRuleObj instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> ruleMap = (java.util.Map<String, Object>) linkedRuleObj;
+                Object idObj = ruleMap.get("id");
+                if (idObj != null) {
+                    ruleId = UUID.fromString(idObj.toString());
+                }
+            } else if (linkedRuleObj instanceof String && !linkedRuleObj.toString().isEmpty()) {
+                ruleId = UUID.fromString(linkedRuleObj.toString());
+            }
+
+            if (ruleId != null) {
+                bucketingRuleRepository.findById(ruleId).ifPresent(threshold::setLinkedBucketingRule);
+            }
+        }
+
         EdiGenerationThreshold savedThreshold = thresholdRepository.save(threshold);
         GenerationThresholdDTO dto = convertThresholdToDTO(savedThreshold);
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
@@ -386,13 +449,69 @@ public class ConfigurationController {
 
     @PutMapping("/thresholds/{id}")
     public ResponseEntity<GenerationThresholdDTO> updateThreshold(
-            @PathVariable UUID id, @Valid @RequestBody EdiGenerationThreshold threshold) {
+            @PathVariable UUID id, @Valid @RequestBody java.util.Map<String, Object> thresholdData) {
         log.info("PUT /api/v1/config/thresholds/{} - Updating threshold", id);
 
         return thresholdRepository.findById(id)
                 .map(existingThreshold -> {
-                    threshold.setThresholdId(id);
-                    EdiGenerationThreshold updatedThreshold = thresholdRepository.save(threshold);
+                    // Update basic fields
+                    if (thresholdData.containsKey("thresholdName")) {
+                        existingThreshold.setThresholdName((String) thresholdData.get("thresholdName"));
+                    }
+                    if (thresholdData.containsKey("thresholdType")) {
+                        existingThreshold.setThresholdType(EdiGenerationThreshold.ThresholdType.valueOf((String) thresholdData.get("thresholdType")));
+                    }
+                    if (thresholdData.containsKey("maxClaims")) {
+                        existingThreshold.setMaxClaims((Integer) thresholdData.get("maxClaims"));
+                    }
+                    if (thresholdData.containsKey("maxAmount")) {
+                        Object amountObj = thresholdData.get("maxAmount");
+                        if (amountObj instanceof Number) {
+                            existingThreshold.setMaxAmount(new java.math.BigDecimal(amountObj.toString()));
+                        }
+                    }
+                    if (thresholdData.containsKey("timeDuration")) {
+                        String timeDuration = (String) thresholdData.get("timeDuration");
+                        existingThreshold.setTimeDuration(timeDuration != null && !timeDuration.isEmpty() ?
+                            EdiGenerationThreshold.TimeDuration.valueOf(timeDuration) : null);
+                    }
+                    if (thresholdData.containsKey("generationSchedule")) {
+                        existingThreshold.setGenerationSchedule((String) thresholdData.get("generationSchedule"));
+                    }
+                    if (thresholdData.containsKey("isActive")) {
+                        existingThreshold.setIsActive((Boolean) thresholdData.get("isActive"));
+                    }
+
+                    // Handle linked bucketing rule (can be nested object or just ID)
+                    if (thresholdData.containsKey("linkedBucketingRule")) {
+                        Object linkedRuleObj = thresholdData.get("linkedBucketingRule");
+                        if (linkedRuleObj != null) {
+                            UUID ruleId = null;
+                            if (linkedRuleObj instanceof java.util.Map) {
+                                @SuppressWarnings("unchecked")
+                                java.util.Map<String, Object> ruleMap = (java.util.Map<String, Object>) linkedRuleObj;
+                                Object idObj = ruleMap.get("id");
+                                if (idObj == null) {
+                                    idObj = ruleMap.get("ruleId");
+                                }
+                                if (idObj != null) {
+                                    ruleId = UUID.fromString(idObj.toString());
+                                }
+                            } else if (linkedRuleObj instanceof String && !linkedRuleObj.toString().isEmpty()) {
+                                ruleId = UUID.fromString(linkedRuleObj.toString());
+                            }
+
+                            if (ruleId != null) {
+                                bucketingRuleRepository.findById(ruleId).ifPresent(existingThreshold::setLinkedBucketingRule);
+                            } else {
+                                existingThreshold.setLinkedBucketingRule(null);
+                            }
+                        } else {
+                            existingThreshold.setLinkedBucketingRule(null);
+                        }
+                    }
+
+                    EdiGenerationThreshold updatedThreshold = thresholdRepository.save(existingThreshold);
                     GenerationThresholdDTO dto = convertThresholdToDTO(updatedThreshold);
                     return ResponseEntity.ok(dto);
                 })
@@ -639,6 +758,17 @@ public class ConfigurationController {
                     return ResponseEntity.ok(dto);
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/commit-criteria/{id}")
+    public ResponseEntity<Void> deleteCommitCriteria(@PathVariable UUID id) {
+        log.info("DELETE /api/v1/config/commit-criteria/{} - Deleting commit criteria", id);
+
+        if (commitCriteriaRepository.existsById(id)) {
+            commitCriteriaRepository.deleteById(id);
+            return ResponseEntity.noContent().build();
+        }
+        return ResponseEntity.notFound().build();
     }
 
     // ==================== File Naming Templates ====================

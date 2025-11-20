@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -23,6 +23,7 @@ import {
   FormControlLabel,
   Chip,
   MenuItem,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,6 +35,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { configurationService } from '../../services/configurationService';
 import { BucketingRule, RuleType } from '../../types/models';
 import { toast } from 'react-toastify';
+
+type SortField = 'priority' | 'ruleName' | 'ruleType' | 'isActive' | 'createdAt';
+type SortOrder = 'asc' | 'desc';
 
 const BucketingRulesConfig: React.FC = () => {
   const queryClient = useQueryClient();
@@ -47,12 +51,64 @@ const BucketingRulesConfig: React.FC = () => {
     groupingExpression: '',
     isActive: true,
   });
+  const [sortField, setSortField] = useState<SortField>('priority');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   // Fetch bucketing rules
   const { data: rules, isLoading, refetch } = useQuery<BucketingRule[]>({
     queryKey: ['bucketingRules'],
     queryFn: configurationService.getAllBucketingRules,
   });
+
+  // Sort rules based on current sort field and order
+  const sortedRules = useMemo(() => {
+    if (!rules) return [];
+
+    return [...rules].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'priority':
+          aValue = a.priority;
+          bValue = b.priority;
+          break;
+        case 'ruleName':
+          aValue = a.ruleName.toLowerCase();
+          bValue = b.ruleName.toLowerCase();
+          break;
+        case 'ruleType':
+          aValue = a.ruleType;
+          bValue = b.ruleType;
+          break;
+        case 'isActive':
+          aValue = a.isActive ? 1 : 0;
+          bValue = b.isActive ? 1 : 0;
+          break;
+        case 'createdAt':
+          aValue = new Date(a.createdAt).getTime();
+          bValue = new Date(b.createdAt).getTime();
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [rules, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Create mutation
   const createMutation = useMutation({
@@ -227,20 +283,58 @@ const BucketingRulesConfig: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>Priority</strong></TableCell>
-                <TableCell><strong>Rule Name</strong></TableCell>
-                <TableCell><strong>Rule Type</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'priority'}
+                    direction={sortField === 'priority' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('priority')}
+                  >
+                    <strong>Priority</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'ruleName'}
+                    direction={sortField === 'ruleName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('ruleName')}
+                  >
+                    <strong>Rule Name</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'ruleType'}
+                    direction={sortField === 'ruleType' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('ruleType')}
+                  >
+                    <strong>Rule Type</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell><strong>Grouping Expression</strong></TableCell>
-                <TableCell><strong>Status</strong></TableCell>
-                <TableCell><strong>Created</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'isActive'}
+                    direction={sortField === 'isActive' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('isActive')}
+                  >
+                    <strong>Status</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'createdAt'}
+                    direction={sortField === 'createdAt' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('createdAt')}
+                  >
+                    <strong>Created</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {rules && rules.length > 0 ? (
-                rules
-                  .sort((a, b) => a.priority - b.priority)
-                  .map((rule) => (
+              {sortedRules.length > 0 ? (
+                sortedRules.map((rule) => (
                     <TableRow key={rule.id || rule.ruleId} hover>
                       <TableCell>
                         <Chip label={rule.priority} color="primary" size="small" />
@@ -346,12 +440,12 @@ const BucketingRulesConfig: React.FC = () => {
 
             <TextField
               fullWidth
-              label="Priority (Lower = Higher Priority)"
+              label="Priority (Higher = Higher Priority)"
               type="number"
               value={formData.priority}
               onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 1 })}
               sx={{ mb: 2 }}
-              helperText="Rules are evaluated in priority order (1 = highest priority)"
+              helperText="Rules are evaluated in descending priority order (100 = highest priority, evaluated first; 1 = lowest priority, evaluated last)"
             />
 
             {formData.ruleType === RuleType.CUSTOM && (

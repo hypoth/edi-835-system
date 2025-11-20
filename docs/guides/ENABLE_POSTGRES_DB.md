@@ -39,15 +39,11 @@ Based on my analysis of your codebase, here are the changes needed to run the ba
   # Create database
   psql -U postgres -c "CREATE DATABASE edi835config;"
 
-  # Run main schema
+  # Run main schema (includes all migrations)
   psql -U postgres -d edi835config -f database/schema.sql
 
-  # Run migrations (if not already in schema.sql)
-  psql -U postgres -d edi835config -f database/migrations/001_add_sftp_fields_to_payers.sql
-  psql -U postgres -d edi835config -f database/migrations/002_create_ncpdp_raw_claims.sql
-
-  Note: Check if migrations 001 and 002 are already incorporated in schema.sql to avoid
-  duplicate execution.
+  Note: All migrations (001: SFTP fields, 002: NCPDP tables) are incorporated in schema.sql.
+  No separate migration files need to be executed.
 
   3. Environment Variables
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Card,
@@ -25,6 +25,7 @@ import {
   MenuItem,
   Alert,
   Paper,
+  TableSortLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -38,6 +39,9 @@ import { configurationService } from '../../services/configurationService';
 import { FileNamingTemplate, BucketingRule } from '../../types/models';
 import { toast } from 'react-toastify';
 
+type SortField = 'templateName' | 'templatePattern' | 'linkedRule' | 'caseConversion' | 'isDefault';
+type SortOrder = 'asc' | 'desc';
+
 const FileNamingTemplatesConfig: React.FC = () => {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -49,6 +53,8 @@ const FileNamingTemplatesConfig: React.FC = () => {
     isDefault: false,
     caseConversion: 'NONE',
   });
+  const [sortField, setSortField] = useState<SortField>('templateName');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   // Fetch templates
   const { data: templates, isLoading, refetch } = useQuery<FileNamingTemplate[]>({
@@ -61,6 +67,56 @@ const FileNamingTemplatesConfig: React.FC = () => {
     queryKey: ['bucketingRules'],
     queryFn: configurationService.getAllBucketingRules,
   });
+
+  // Sort templates based on current sort field and order
+  const sortedTemplates = useMemo(() => {
+    if (!templates) return [];
+
+    return [...templates].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sortField) {
+        case 'templateName':
+          aValue = a.templateName.toLowerCase();
+          bValue = b.templateName.toLowerCase();
+          break;
+        case 'templatePattern':
+          aValue = a.templatePattern.toLowerCase();
+          bValue = b.templatePattern.toLowerCase();
+          break;
+        case 'linkedRule':
+          aValue = a.linkedBucketingRule?.ruleName?.toLowerCase() || '';
+          bValue = b.linkedBucketingRule?.ruleName?.toLowerCase() || '';
+          break;
+        case 'caseConversion':
+          aValue = (a.caseConversion || 'NONE').toLowerCase();
+          bValue = (b.caseConversion || 'NONE').toLowerCase();
+          break;
+        case 'isDefault':
+          aValue = a.isDefault ? 1 : 0;
+          bValue = b.isDefault ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [templates, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle sort order if same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field with ascending order
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
 
   // Create mutation
   const createMutation = useMutation({
@@ -233,18 +289,58 @@ const FileNamingTemplatesConfig: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell><strong>Template Name</strong></TableCell>
-                <TableCell><strong>Pattern</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'templateName'}
+                    direction={sortField === 'templateName' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('templateName')}
+                  >
+                    <strong>Template Name</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'templatePattern'}
+                    direction={sortField === 'templatePattern' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('templatePattern')}
+                  >
+                    <strong>Pattern</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell><strong>Example Output</strong></TableCell>
-                <TableCell><strong>Linked Rule</strong></TableCell>
-                <TableCell><strong>Case Conversion</strong></TableCell>
-                <TableCell><strong>Default</strong></TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'linkedRule'}
+                    direction={sortField === 'linkedRule' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('linkedRule')}
+                  >
+                    <strong>Linked Rule</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'caseConversion'}
+                    direction={sortField === 'caseConversion' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('caseConversion')}
+                  >
+                    <strong>Case Conversion</strong>
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'isDefault'}
+                    direction={sortField === 'isDefault' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('isDefault')}
+                  >
+                    <strong>Default</strong>
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="center"><strong>Actions</strong></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {templates && templates.length > 0 ? (
-                templates.map((template) => (
+              {sortedTemplates.length > 0 ? (
+                sortedTemplates.map((template) => (
                   <TableRow key={template.templateId} hover>
                     <TableCell>
                       <Box display="flex" alignItems="center" gap={1}>
