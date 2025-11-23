@@ -2,6 +2,8 @@ package com.healthcare.edi835.controller;
 
 import com.healthcare.edi835.entity.BucketApprovalLog;
 import com.healthcare.edi835.entity.EdiFileBucket;
+import com.healthcare.edi835.exception.CheckAssignmentException;
+import com.healthcare.edi835.exception.NoAvailableChecksException;
 import com.healthcare.edi835.model.dto.ApprovalRequestDTO;
 import com.healthcare.edi835.service.ApprovalWorkflowService;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +87,30 @@ public class ApprovalController {
             );
 
             return ResponseEntity.ok(response);
+
+        } catch (CheckAssignmentException e) {
+            // Check assignment failed - approval has been rolled back
+            log.error("Check assignment failed for bucket {}, approval rolled back: {}",
+                    bucketId, e.getMessage(), e);
+
+            // Determine if it's due to no available checks
+            String errorCode = "CHECK_ASSIGNMENT_FAILED";
+            String userMessage = "Approval failed: Check assignment could not be completed. " +
+                    "The approval has been rolled back. Please retry or assign check manually.";
+
+            if (e.getCause() instanceof NoAvailableChecksException) {
+                errorCode = "NO_AVAILABLE_CHECKS";
+                userMessage = "Approval failed: No check numbers available for auto-assignment. " +
+                        "Please add more check reservations or assign check manually.";
+            }
+
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                            "error", userMessage,
+                            "errorCode", errorCode,
+                            "bucketId", bucketId.toString(),
+                            "cause", e.getCause() != null ? e.getCause().getMessage() : e.getMessage()
+                    ));
 
         } catch (IllegalStateException e) {
             log.warn("Failed to approve bucket {}: {}", bucketId, e.getMessage());
@@ -301,6 +327,17 @@ public class ApprovalController {
                     "message", "Bucket approved",
                     "bucketId", bucketId.toString()
             ));
+
+        } catch (CheckAssignmentException e) {
+            log.error("Quick approval failed for bucket {} - check assignment failed, rolled back: {}",
+                    bucketId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                            "error", "Check assignment failed - approval rolled back",
+                            "errorCode", e.getCause() instanceof NoAvailableChecksException
+                                    ? "NO_AVAILABLE_CHECKS" : "CHECK_ASSIGNMENT_FAILED",
+                            "cause", e.getCause() != null ? e.getCause().getMessage() : e.getMessage()
+                    ));
 
         } catch (Exception e) {
             log.error("Quick approval failed for bucket {}: {}", bucketId, e.getMessage());

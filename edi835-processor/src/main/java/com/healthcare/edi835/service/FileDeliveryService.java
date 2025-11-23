@@ -185,7 +185,7 @@ public class FileDeliveryService {
      *
      * Implementation uses Spring Integration SFTP with JSch for secure file transfer.
      * Features:
-     * - Connection pooling and caching
+     * - Connection pooling and caching (session factories cached per payer)
      * - Automatic session management
      * - Robust error handling
      * - Per-payer SFTP configuration
@@ -219,17 +219,13 @@ public class FileDeliveryService {
             return;
         }
 
-        SessionFactory<SftpClient.DirEntry> sessionFactory = null;
         Session<SftpClient.DirEntry> session = null;
 
         try {
-            // Create SFTP session factory for this payer
-            sessionFactory = sftpConfig.createSessionFactory(payer);
+            // Get cached SFTP session factory for this payer (avoids resource exhaustion)
+            SessionFactory<SftpClient.DirEntry> sessionFactory = sftpConfig.getOrCreateSessionFactory(payer);
 
-            // Create remote file template for file operations
-            SftpRemoteFileTemplate template = sftpConfig.createRemoteFileTemplate(sessionFactory);
-
-            // Get session from factory
+            // Get session from cached factory pool
             session = sessionFactory.getSession();
 
             // Prepare remote path
@@ -256,11 +252,11 @@ public class FileDeliveryService {
             throw new DeliveryException(errorMsg, e);
 
         } finally {
-            // Close session if opened
+            // Return session to pool (CachingSessionFactory handles this)
             if (session != null && session.isOpen()) {
                 try {
                     session.close();
-                    log.debug("SFTP session closed for file: {}", file.getFileName());
+                    log.debug("SFTP session returned to pool for file: {}", file.getFileName());
                 } catch (Exception e) {
                     log.warn("Error closing SFTP session: {}", e.getMessage());
                 }

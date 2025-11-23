@@ -147,6 +147,14 @@ logging:
     max-size: 10MB
     max-history: 30
 
+# Check Reservation Transaction Configuration
+# Controls whether check reservations use separate transactions (REQUIRES_NEW)
+check-reservation:
+  # PostgreSQL: Use separate transactions for compensation-based safety
+  # This requires adequate connection pool size (minimum 3 connections)
+  use-separate-transaction: true
+  enable-compensation: true
+
 # Server Configuration
 server:
   port: ${SERVER_PORT:8080}

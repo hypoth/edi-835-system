@@ -118,6 +118,44 @@ CREATE TABLE IF NOT EXISTS edi_generation_thresholds (
 
 CREATE INDEX IF NOT EXISTS idx_gen_thresholds_rule ON edi_generation_thresholds(linked_bucketing_rule_id);
 
+-- Check payment workflow configuration (linked to thresholds)
+CREATE TABLE IF NOT EXISTS check_payment_workflow_config (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    config_name TEXT NOT NULL,
+    -- Workflow mode determines the approval + check assignment flow
+    workflow_mode TEXT NOT NULL DEFAULT 'NONE'
+        CHECK (workflow_mode IN ('NONE', 'SEPARATE', 'COMBINED')),
+    -- NONE: No check payment required (EFT or other payment method)
+    -- SEPARATE: Approve first, then assign check in separate step
+    -- COMBINED: Approve and assign check in single dialog
+
+    -- Assignment mode
+    assignment_mode TEXT NOT NULL DEFAULT 'MANUAL'
+        CHECK (assignment_mode IN ('MANUAL', 'AUTO', 'BOTH')),
+    -- MANUAL: User enters check details manually
+    -- AUTO: System auto-assigns from check reservations
+    -- BOTH: User can choose manual or auto
+
+    -- Acknowledgment requirement
+    require_acknowledgment INTEGER DEFAULT 0 CHECK(require_acknowledgment IN (0, 1)),
+    -- 0: Check assignment is enough, can generate EDI immediately
+    -- 1: Requires acknowledgment step before EDI generation
+
+    -- Link to threshold (one-to-one relationship)
+    linked_threshold_id TEXT UNIQUE REFERENCES edi_generation_thresholds(id) ON DELETE CASCADE,
+
+    -- Description and metadata
+    description TEXT,
+    is_active INTEGER DEFAULT 1 CHECK(is_active IN (0, 1)),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT,
+    updated_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_config_threshold ON check_payment_workflow_config(linked_threshold_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_config_active ON check_payment_workflow_config(is_active);
+
 -- EDI commit criteria
 CREATE TABLE IF NOT EXISTS edi_commit_criteria (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -183,6 +221,131 @@ CREATE TABLE IF NOT EXISTS payment_methods (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ===========================================================================
+-- CHECK PAYMENT TABLES
+-- ===========================================================================
+-- Tables for managing check payments (Phase 1: Check Payment Implementation)
+
+-- Check payments - individual check assignments to buckets
+CREATE TABLE IF NOT EXISTS check_payments (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    bucket_id TEXT NOT NULL REFERENCES edi_file_buckets(bucket_id) ON DELETE CASCADE,
+    check_number TEXT UNIQUE NOT NULL,  -- Alphanumeric, variable length (e.g., CHK000123)
+    check_amount REAL NOT NULL,
+    check_date DATE NOT NULL,
+    bank_name TEXT,
+    routing_number TEXT,
+    account_number_last4 TEXT,  -- Last 4 digits for reference
+
+    -- Check status
+    status TEXT NOT NULL DEFAULT 'RESERVED'
+        CHECK (status IN ('RESERVED', 'ASSIGNED', 'ACKNOWLEDGED', 'ISSUED', 'VOID', 'CANCELLED')),
+
+    -- Assignment tracking
+    assigned_by TEXT,  -- User who assigned (manual) or 'SYSTEM' (auto)
+    assigned_at TIMESTAMP,
+    acknowledged_by TEXT,  -- User who acknowledged the amount
+    acknowledged_at TIMESTAMP,
+    issued_by TEXT,  -- User who marked as issued
+    issued_at TIMESTAMP,
+    void_reason TEXT,  -- Reason for voiding
+    voided_by TEXT,  -- User who voided
+    voided_at TIMESTAMP,
+
+    -- Payment method reference
+    payment_method_id TEXT REFERENCES payment_methods(id),
+
+    -- Audit fields
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT,
+    updated_by TEXT,
+
+    -- Constraints
+    UNIQUE(bucket_id)  -- One check per bucket
+);
+
+CREATE INDEX IF NOT EXISTS idx_check_payments_bucket ON check_payments(bucket_id);
+CREATE INDEX IF NOT EXISTS idx_check_payments_status ON check_payments(status);
+CREATE INDEX IF NOT EXISTS idx_check_payments_check_number ON check_payments(check_number);
+CREATE INDEX IF NOT EXISTS idx_check_payments_payment_method ON check_payments(payment_method_id);
+
+-- Check reservations - pre-allocated check number ranges for auto-approval
+CREATE TABLE IF NOT EXISTS check_reservations (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    check_number_start TEXT NOT NULL,  -- Starting check number (alphanumeric)
+    check_number_end TEXT NOT NULL,    -- Ending check number (alphanumeric)
+    total_checks INTEGER NOT NULL,     -- Total checks in range
+    checks_used INTEGER DEFAULT 0,     -- Number of checks used
+
+    -- Bank details (multiple accounts per payer supported)
+    bank_name TEXT NOT NULL,
+    routing_number TEXT,
+    account_number_last4 TEXT,
+    payment_method_id TEXT REFERENCES payment_methods(id),
+    payer_id TEXT REFERENCES payers(id),  -- Which payer this reservation belongs to
+
+    -- Range status
+    status TEXT NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE', 'EXHAUSTED', 'CANCELLED')),
+
+    -- Audit fields
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT,
+    updated_by TEXT,
+
+    -- Ensure no overlapping ranges (within same payer)
+    UNIQUE(payer_id, check_number_start, check_number_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_check_reservations_status ON check_reservations(status);
+CREATE INDEX IF NOT EXISTS idx_check_reservations_payer ON check_reservations(payer_id);
+CREATE INDEX IF NOT EXISTS idx_check_reservations_payment_method ON check_reservations(payment_method_id);
+
+-- Check audit log - complete audit trail for compliance
+CREATE TABLE IF NOT EXISTS check_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_payment_id TEXT REFERENCES check_payments(id) ON DELETE CASCADE,
+    check_number TEXT NOT NULL,
+    action TEXT NOT NULL,  -- RESERVED, ASSIGNED, ACKNOWLEDGED, ISSUED, VOID, CANCELLED
+    bucket_id TEXT,
+    amount REAL,
+    performed_by TEXT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_check_audit_check ON check_audit_log(check_payment_id);
+CREATE INDEX IF NOT EXISTS idx_check_audit_bucket ON check_audit_log(bucket_id);
+CREATE INDEX IF NOT EXISTS idx_check_audit_date ON check_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_check_audit_check_number ON check_audit_log(check_number);
+
+-- Check payment configuration - system settings
+CREATE TABLE IF NOT EXISTS check_payment_config (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    config_key TEXT UNIQUE NOT NULL,
+    config_value TEXT NOT NULL,
+    description TEXT,
+    value_type TEXT DEFAULT 'STRING' CHECK (value_type IN ('STRING', 'INTEGER', 'BOOLEAN', 'EMAIL')),
+    is_active INTEGER DEFAULT 1 CHECK(is_active IN (0, 1)),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_by TEXT,
+    updated_by TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_check_payment_config_key ON check_payment_config(config_key);
+
+-- Default configuration values
+INSERT INTO check_payment_config (config_key, config_value, description, value_type) VALUES
+('void_time_limit_hours', '72', 'Time limit in hours for voiding a check after issuance', 'INTEGER'),
+('low_stock_alert_threshold', '10', 'Alert when check reservation has fewer than this many checks remaining', 'INTEGER'),
+('low_stock_alert_emails', 'finance@example.com,admin@example.com', 'Comma-separated email addresses for low stock alerts', 'EMAIL'),
+('void_authorized_roles', 'FINANCIAL_ADMIN,SYSTEM_ADMIN', 'Roles authorized to void checks', 'STRING'),
+('default_check_range_size', '100', 'Default number of checks in a reservation range', 'INTEGER'),
+('require_acknowledgment_before_edi', 'false', 'Whether check acknowledgment is required before EDI generation', 'BOOLEAN');
+
 -- Adjustment code mappings (CARC/RARC)
 CREATE TABLE IF NOT EXISTS adjustment_code_mapping (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -221,12 +384,24 @@ CREATE TABLE IF NOT EXISTS edi_file_buckets (
     approved_by TEXT,
     approved_at TIMESTAMP,
     generation_started_at TIMESTAMP,
-    generation_completed_at TIMESTAMP
+    generation_completed_at TIMESTAMP,
+
+    -- Payment tracking fields (Phase 1: Check Payment Implementation)
+    payment_status TEXT DEFAULT 'PENDING' CHECK (payment_status IN ('PENDING', 'ASSIGNED', 'ACKNOWLEDGED', 'ISSUED')),
+    payment_required INTEGER DEFAULT 1 CHECK(payment_required IN (0, 1)),
+    check_payment_id TEXT REFERENCES check_payments(id),
+    payment_date DATE,
+
+    -- Error tracking fields (for debugging failed buckets)
+    last_error_message TEXT,  -- Last error message (max 2000 chars)
+    last_error_at TIMESTAMP   -- When the last error occurred
 );
 
 CREATE INDEX IF NOT EXISTS idx_buckets_status ON edi_file_buckets(status);
 CREATE INDEX IF NOT EXISTS idx_buckets_payer_payee ON edi_file_buckets(payer_id, payee_id);
 CREATE INDEX IF NOT EXISTS idx_buckets_pending ON edi_file_buckets(status) WHERE status = 'PENDING_APPROVAL';
+CREATE INDEX IF NOT EXISTS idx_buckets_payment_status ON edi_file_buckets(payment_status);
+CREATE INDEX IF NOT EXISTS idx_buckets_check_payment ON edi_file_buckets(check_payment_id);
 
 -- Bucket approval log
 CREATE TABLE IF NOT EXISTS bucket_approval_log (
@@ -364,6 +539,7 @@ END;
 -- PAYERS
 -- =========================
 -- Includes test payer (PAYER001) for test-change-feed.sh script and production-like samples
+-- Also includes payers from D0 sample claims for proper claim processing
 
 INSERT OR IGNORE INTO payers (id, payer_id, payer_name, isa_qualifier, isa_sender_id,
     gs_application_sender_id, address_street, address_city, address_state, address_zip,
@@ -394,6 +570,75 @@ VALUES
 
     ('550e8400-e29b-41d4-a716-446655440004', 'CIGNA001', 'Cigna Health', 'ZZ', 'CIGNA001ISA', 'CIGNA001GS',
      '900 Coverage Street', 'Bloomfield', 'CT', '06002',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- ===== D0 Sample Claims Payers =====
+    -- These payers match the payer IDs in d0-samples/ncpdp_rx_claims.txt
+
+    -- Optum Rx (PBM)
+    ('550e8400-e29b-41d4-a716-446655440010', 'OPTUM_RX', 'Optum Rx Services', 'ZZ', 'OPTUMRX', 'OPTUMRXGS',
+     '11000 Optum Circle', 'Eden Prairie', 'MN', '55344',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- United Healthcare
+    ('550e8400-e29b-41d4-a716-446655440011', 'UNITED_HEALTHCARE', 'UnitedHealthcare Insurance', 'ZZ', 'UNITEDHC', 'UNITEDHCGS',
+     '9900 Bren Road East', 'Minnetonka', 'MN', '55343',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Anthem Blue Cross
+    ('550e8400-e29b-41d4-a716-446655440012', 'ANTHEM', 'Anthem Blue Cross Blue Shield', 'ZZ', 'ANTHEMBC', 'ANTHEMBCGS',
+     '220 Virginia Ave', 'Indianapolis', 'IN', '46204',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Humana
+    ('550e8400-e29b-41d4-a716-446655440013', 'HUMANA', 'Humana Insurance Company', 'ZZ', 'HUMANAINC', 'HUMANAINCGS',
+     '500 West Main Street', 'Louisville', 'KY', '40202',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Express Scripts (PBM)
+    ('550e8400-e29b-41d4-a716-446655440014', 'EXPRESS_SCRIPTS', 'Express Scripts Inc', 'ZZ', 'EXPRESSCR', 'EXPRESSCRGS',
+     '1 Express Way', 'St. Louis', 'MO', '63121',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- CVS Caremark (PBM)
+    ('550e8400-e29b-41d4-a716-446655440015', 'CVS_CAREMARK', 'CVS Caremark Corporation', 'ZZ', 'CVSCAREMK', 'CVSCAREMKGS',
+     '1 CVS Drive', 'Woonsocket', 'RI', '02895',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Cigna
+    ('550e8400-e29b-41d4-a716-446655440016', 'CIGNA', 'Cigna Corporation', 'ZZ', 'CIGNACORP', 'CIGNACORPGS',
+     '900 Cottage Grove Road', 'Bloomfield', 'CT', '06002',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Aetna
+    ('550e8400-e29b-41d4-a716-446655440017', 'AETNA', 'Aetna Inc', 'ZZ', 'AETNAINC', 'AETNAINCGS',
+     '151 Farmington Avenue', 'Hartford', 'CT', '06156',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- BCBS California
+    ('550e8400-e29b-41d4-a716-446655440018', 'BCBS_CA', 'Blue Cross Blue Shield California', 'ZZ', 'BCBSCA', 'BCBSCAGS',
+     '21555 Oxnard Street', 'Woodland Hills', 'CA', '91367',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     0, 1, 'system'),
+
+    -- Medicaid California
+    ('550e8400-e29b-41d4-a716-446655440019', 'MEDICAID_CA', 'California Medicaid (Medi-Cal)', 'ZZ', 'MEDICAIDCA', 'MEDICAIDCAGS',
+     '1501 Capitol Avenue', 'Sacramento', 'CA', '95814',
+     'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
+     1, 1, 'system'),
+
+    -- Kaiser Permanente
+    ('550e8400-e29b-41d4-a716-446655440020', 'KAISER', 'Kaiser Permanente', 'ZZ', 'KAISERPERM', 'KAISERPERMGS',
+     'One Kaiser Plaza', 'Oakland', 'CA', '94612',
      'localhost', 22, 'payer001', '97e0cca0ebaca8f5cb511a7fd0dc7dd1aeede349096c4e70b00ef1c71e2144b7', '/test/835',
      0, 1, 'system');
 
@@ -586,7 +831,7 @@ VALUES
 -- Commit Criteria (3 default criteria)
 INSERT OR IGNORE INTO edi_commit_criteria (id, criteria_name, commit_mode, auto_commit_threshold, manual_approval_threshold, approval_required_roles, override_permissions, linked_bucketing_rule_id, is_active, created_at, updated_at, created_by, updated_by)
 VALUES
-('7b0e8400-e29b-41d4-a716-446655440001', 'Auto Commit Small Batches', 'AUTO', 5000, 3, NULL, NULL, '770e8400-e29b-41d4-a716-446655440001', 0, '2025-11-20 09:26:33', '2025-11-20 11:49:33', 'system', NULL),
+('7b0e8400-e29b-41d4-a716-446655440001', 'Auto Commit Small Batches', 'AUTO', 1000, 5, NULL, NULL, '770e8400-e29b-41d4-a716-446655440001', 0, '2025-11-20 09:26:33', '2025-11-20 11:49:33', 'system', NULL),
 ('7b0e8400-e29b-41d4-a716-446655440002', 'Manual Approval Required', 'MANUAL', NULL, NULL, '["OPERATIONS_MANAGER","FINANCE_ADMIN"]', NULL, '770e8400-e29b-41d4-a716-446655440002', 1, '2025-11-20 09:26:33', '2025-11-20 09:26:33', 'system', NULL),
 ('6401826c-752f-4979-9377-bcb3925e760d', 'Manual_Payer_Payee', 'MANUAL', NULL, NULL, '["ADMIN"]', NULL, '770e8400-e29b-41d4-a716-446655440001', 1, 1763639355402, 1763639355402, NULL, NULL);
 
@@ -606,6 +851,74 @@ VALUES
     -- Detailed format with time component
     ('880e8400-e29b-41d4-a716-446655440002', 'Detailed Format', 'EDI835_{payerId}_{date}_{time}_SEQ{sequenceNumber}.txt',
      'yyyy-MM-dd', 'HHmmss', 6, 'UPPER', '_', 0, NULL, 1, 'system');
+
+-- =========================
+-- CHECK RESERVATIONS
+-- =========================
+-- Pre-allocated check number ranges for auto-assignment (Phase 1: Check Payment Implementation)
+-- These enable AUTO assignment mode for check payments during bucket approval
+
+INSERT OR IGNORE INTO check_reservations (id, check_number_start, check_number_end, total_checks, checks_used,
+    bank_name, routing_number, account_number_last4, payment_method_id, payer_id,
+    status, created_at, updated_at, created_by, updated_by)
+VALUES
+    -- OPTUM_RX Check Reservations (Primary PBM)
+    ('990e8400-e29b-41d4-a716-446655440001', 'CHK100001', 'CHK100500', 500, 0,
+     'First National Bank', '021000021', '4567', NULL, '550e8400-e29b-41d4-a716-446655440010',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    ('990e8400-e29b-41d4-a716-446655440002', 'CHK100501', 'CHK101000', 500, 0,
+     'First National Bank', '021000021', '4567', NULL, '550e8400-e29b-41d4-a716-446655440010',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- UNITED_HEALTHCARE Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440003', 'CHK200001', 'CHK200500', 500, 0,
+     'Wells Fargo Bank', '121000248', '8901', NULL, '550e8400-e29b-41d4-a716-446655440011',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- ANTHEM Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440004', 'CHK300001', 'CHK300500', 500, 0,
+     'Chase Bank', '021000089', '2345', NULL, '550e8400-e29b-41d4-a716-446655440012',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- HUMANA Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440005', 'CHK400001', 'CHK400500', 500, 0,
+     'Bank of America', '026009593', '6789', NULL, '550e8400-e29b-41d4-a716-446655440013',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- EXPRESS_SCRIPTS Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440006', 'CHK500001', 'CHK500500', 500, 0,
+     'US Bank', '091000019', '1234', NULL, '550e8400-e29b-41d4-a716-446655440014',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- CVS_CAREMARK Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440007', 'CHK600001', 'CHK600500', 500, 0,
+     'Citizens Bank', '011500010', '5678', NULL, '550e8400-e29b-41d4-a716-446655440015',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- CIGNA Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440008', 'CHK700001', 'CHK700500', 500, 0,
+     'TD Bank', '031101266', '9012', NULL, '550e8400-e29b-41d4-a716-446655440016',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL),
+
+    -- AETNA Check Reservations
+    ('990e8400-e29b-41d4-a716-446655440009', 'CHK800001', 'CHK800500', 500, 0,
+     'PNC Bank', '043000096', '3456', NULL, '550e8400-e29b-41d4-a716-446655440017',
+     'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL);
+
+-- =========================
+-- CHECK PAYMENT WORKFLOW CONFIG
+-- =========================
+-- Sample workflow configurations for auto-assignment testing
+-- Links thresholds to check payment workflows
+
+INSERT OR IGNORE INTO check_payment_workflow_config (id, config_name, workflow_mode, assignment_mode,
+    require_acknowledgment, linked_threshold_id, description, is_active, created_at, updated_at, created_by, updated_by)
+VALUES
+    -- Workflow config for Quick Daily Batch (linked to threshold 49ba75a6...)
+    ('aa0e8400-e29b-41d4-a716-446655440001', 'Auto Check Assignment Workflow', 'SEPARATE', 'AUTO',
+     0, '49ba75a6-7fff-420b-9af5-e57b20d952cf', 'Automatic check assignment from reservations after approval', 1,
+     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'system', NULL);
 
 -- ===========================================================================
 -- NOTES

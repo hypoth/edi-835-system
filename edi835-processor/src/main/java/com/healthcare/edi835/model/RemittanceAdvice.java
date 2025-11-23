@@ -37,6 +37,10 @@ public class RemittanceAdvice {
     // Claims included in this remittance
     private List<ClaimPayment> claims;
 
+    // ISA Envelope IDs (for X12 header)
+    private String isaSenderId;      // ISA06 - Interchange Sender ID
+    private String isaReceiverId;    // ISA08 - Interchange Receiver ID
+
     // Metadata
     private LocalDate productionDate;
     private String transactionSetControlNumber;
@@ -165,11 +169,13 @@ public class RemittanceAdvice {
     }
 
     public String getSenderId() {
-        return payerId;
+        // Use ISA Sender ID if available, fallback to payerId
+        return isaSenderId != null && !isaSenderId.isBlank() ? isaSenderId : payerId;
     }
 
     public String getReceiverId() {
-        return payeeId;
+        // Use ISA Receiver ID if available, fallback to payeeId
+        return isaReceiverId != null && !isaReceiverId.isBlank() ? isaReceiverId : payeeId;
     }
 
     public int getSegmentCount() {

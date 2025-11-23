@@ -31,6 +31,9 @@ import {
   Gavel as GavelIcon,
   Label as LabelIcon,
   Dashboard as DashboardSpeedIcon,
+  Payment as PaymentIcon,
+  AccountBalanceWallet as WalletIcon,
+  Assessment as AssessmentIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -50,6 +53,7 @@ interface MenuItem {
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(true);
+  const [checkPaymentsOpen, setCheckPaymentsOpen] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -68,6 +72,27 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       text: 'Approvals',
       icon: <CheckCircleIcon />,
       path: '/approvals',
+    },
+    {
+      text: 'Check Payments',
+      icon: <PaymentIcon />,
+      children: [
+        {
+          text: 'Payment Management',
+          icon: <PaymentIcon />,
+          path: '/check-payments',
+        },
+        {
+          text: 'Check Reservations',
+          icon: <WalletIcon />,
+          path: '/check-reservations',
+        },
+        {
+          text: 'Check Usage Status',
+          icon: <AssessmentIcon />,
+          path: '/check-usage',
+        },
+      ],
     },
     {
       text: 'Files',
@@ -113,6 +138,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           icon: <LabelIcon />,
           path: '/config/templates',
         },
+        {
+          text: 'Check Payment Workflow',
+          icon: <PaymentIcon />,
+          path: '/config/check-payment-workflow',
+        },
+        {
+          text: 'Check Payment Settings',
+          icon: <SettingsIcon />,
+          path: '/config/check-payment-settings',
+        },
       ],
     },
   ];
@@ -132,6 +167,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     setConfigOpen(!configOpen);
   };
 
+  const handleCheckPaymentsToggle = () => {
+    setCheckPaymentsOpen(!checkPaymentsOpen);
+  };
+
   const isActive = (path: string) => {
     return location.pathname === path;
   };
@@ -149,12 +188,38 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           <React.Fragment key={item.text}>
             {item.children ? (
               <>
-                <ListItemButton onClick={handleConfigToggle}>
+                <ListItemButton
+                  onClick={
+                    item.text === 'Configuration'
+                      ? handleConfigToggle
+                      : item.text === 'Check Payments'
+                      ? handleCheckPaymentsToggle
+                      : undefined
+                  }
+                >
                   <ListItemIcon>{item.icon}</ListItemIcon>
                   <ListItemText primary={item.text} />
-                  {configOpen ? <ExpandLess /> : <ExpandMore />}
+                  {item.text === 'Configuration'
+                    ? configOpen
+                      ? <ExpandLess />
+                      : <ExpandMore />
+                    : item.text === 'Check Payments'
+                    ? checkPaymentsOpen
+                      ? <ExpandLess />
+                      : <ExpandMore />
+                    : null}
                 </ListItemButton>
-                <Collapse in={configOpen} timeout="auto" unmountOnExit>
+                <Collapse
+                  in={
+                    item.text === 'Configuration'
+                      ? configOpen
+                      : item.text === 'Check Payments'
+                      ? checkPaymentsOpen
+                      : false
+                  }
+                  timeout="auto"
+                  unmountOnExit
+                >
                   <List component="div" disablePadding>
                     {item.children.map((child) => (
                       <ListItemButton

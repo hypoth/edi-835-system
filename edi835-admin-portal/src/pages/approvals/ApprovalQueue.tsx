@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -24,6 +24,7 @@ import {
   Alert,
   Grid,
   TableSortLabel,
+  Divider,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -34,7 +35,9 @@ import {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { approvalService } from '../../services/approvalService';
-import { Bucket } from '../../types/models';
+import { checkPaymentService } from '../../services/checkPaymentService';
+import { checkPaymentWorkflowService } from '../../services/checkPaymentWorkflowService';
+import { Bucket, CheckPaymentWorkflowConfig } from '../../types/models';
 import { toast } from 'react-toastify';
 
 type SortField = 'bucketId' | 'payerName' | 'payeeName' | 'claimCount' | 'totalAmount' | 'awaitingApprovalSince';
@@ -52,6 +55,16 @@ const ApprovalQueue: React.FC = () => {
   const [rejectionReason, setRejectionReason] = useState('');
   const [sortField, setSortField] = useState<SortField>('awaitingApprovalSince');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+
+  // Check payment fields
+  const [workflowConfig, setWorkflowConfig] = useState<CheckPaymentWorkflowConfig | null>(null);
+  const [loadingWorkflowConfig, setLoadingWorkflowConfig] = useState(false);
+  const [checkNumber, setCheckNumber] = useState('');
+  const [checkAmount, setCheckAmount] = useState('');
+  const [checkDate, setCheckDate] = useState(new Date().toISOString().split('T')[0]);
+  const [bankName, setBankName] = useState('');
+  const [routingNumber, setRoutingNumber] = useState('');
+  const [accountLast4, setAccountLast4] = useState('');
 
   // Fetch pending approvals
   const { data: pendingBuckets, isLoading, refetch } = useQuery<Bucket[]>({
@@ -167,9 +180,52 @@ const ApprovalQueue: React.FC = () => {
     },
   });
 
-  const handleApproveClick = (bucketId: string) => {
+  const handleApproveClick = async (bucketId: string) => {
     setCurrentBucketId(bucketId);
     setApprovalDialogOpen(true);
+
+    // Find the bucket to get its bucketing rule ID and then fetch workflow config
+    const bucket = sortedBuckets.find(b => b.bucketId === bucketId);
+    if (bucket?.bucketingRuleId) {
+      await fetchWorkflowConfig(bucket.bucketingRuleId);
+    }
+  };
+
+  // Fetch workflow configuration for the bucket's threshold
+  const fetchWorkflowConfig = async (bucketingRuleId: string) => {
+    setLoadingWorkflowConfig(true);
+    try {
+      // First, get thresholds for this bucketing rule
+      const response = await fetch(
+        `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1'}/config/thresholds/rule/${bucketingRuleId}`
+      );
+
+      if (!response.ok) {
+        setWorkflowConfig(null);
+        return;
+      }
+
+      const thresholds = await response.json();
+      if (thresholds && thresholds.length > 0) {
+        // Get workflow config for the first threshold (or active one)
+        const threshold = thresholds.find((t: any) => t.isActive) || thresholds[0];
+        if (threshold?.id) {
+          const config = await checkPaymentWorkflowService.getWorkflowConfigByThreshold(threshold.id);
+          setWorkflowConfig(config);
+
+          // Auto-populate check amount from bucket if available
+          const bucket = sortedBuckets.find(b => b.bucketingRuleId === bucketingRuleId);
+          if (bucket && config?.workflowMode === 'COMBINED') {
+            setCheckAmount(bucket.totalAmount.toFixed(2));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching workflow config:', error);
+      setWorkflowConfig(null);
+    } finally {
+      setLoadingWorkflowConfig(false);
+    }
   };
 
   const handleRejectClick = (bucketId: string) => {
@@ -186,14 +242,78 @@ const ApprovalQueue: React.FC = () => {
     setApprovalDialogOpen(true);
   };
 
-  const handleApprovalConfirm = () => {
+  const handleApprovalConfirm = async () => {
     if (!actionBy.trim()) {
       toast.warning('Please enter your name');
       return;
     }
 
-    if (currentBucketId) {
-      // Single approval
+    // Handle COMBINED workflow with check payment
+    if (workflowConfig?.workflowMode === 'COMBINED' && currentBucketId) {
+      // Check if AUTO assignment mode
+      if (workflowConfig.assignmentMode === 'AUTO') {
+        // AUTO mode - automatically assign from reservations
+        try {
+          // Step 1: Approve the bucket
+          await approvalService.approveBucket(currentBucketId, {
+            actionBy: actionBy.trim(),
+            comments: comments.trim() || undefined,
+          });
+
+          // Step 2: Auto-assign check from reservations
+          await checkPaymentService.assignCheckAutomatically(
+            currentBucketId,
+            actionBy.trim()
+          );
+
+          toast.success('Bucket approved and check auto-assigned successfully');
+          queryClient.invalidateQueries({ queryKey: ['pendingApprovals'] });
+          handleCloseDialogs();
+        } catch (error: any) {
+          toast.error(error.response?.data?.error || 'Failed to approve bucket with auto check assignment');
+        }
+      } else {
+        // MANUAL assignment mode - validate manual fields
+        if (!checkNumber.trim()) {
+          toast.warning('Please enter check number');
+          return;
+        }
+        if (!checkAmount || parseFloat(checkAmount) <= 0) {
+          toast.warning('Please enter a valid check amount');
+          return;
+        }
+        if (!checkDate) {
+          toast.warning('Please enter check date');
+          return;
+        }
+
+        // Handle combined approval + manual check payment
+        try {
+          // Step 1: Approve the bucket
+          await approvalService.approveBucket(currentBucketId, {
+            actionBy: actionBy.trim(),
+            comments: comments.trim() || undefined,
+          });
+
+          // Step 2: Assign check payment manually
+          await checkPaymentService.assignCheckManually(currentBucketId, {
+            checkNumber: checkNumber.trim(),
+            checkDate: checkDate,
+            bankName: bankName.trim() || undefined,
+            routingNumber: routingNumber.trim() || undefined,
+            accountLast4: accountLast4.trim() || undefined,
+            assignedBy: actionBy.trim(),
+          });
+
+          toast.success('Bucket approved and check assigned successfully');
+          queryClient.invalidateQueries({ queryKey: ['pendingApprovals'] });
+          handleCloseDialogs();
+        } catch (error: any) {
+          toast.error(error.response?.data?.error || 'Failed to approve bucket with check payment');
+        }
+      }
+    } else if (currentBucketId) {
+      // Single approval (without check payment)
       approveMutation.mutate({
         bucketId: currentBucketId,
         actionBy: actionBy.trim(),
@@ -237,6 +357,15 @@ const ApprovalQueue: React.FC = () => {
     setActionBy('');
     setComments('');
     setRejectionReason('');
+
+    // Reset check payment fields
+    setWorkflowConfig(null);
+    setCheckNumber('');
+    setCheckAmount('');
+    setCheckDate(new Date().toISOString().split('T')[0]);
+    setBankName('');
+    setRoutingNumber('');
+    setAccountLast4('');
   };
 
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -480,33 +609,138 @@ const ApprovalQueue: React.FC = () => {
       </Card>
 
       {/* Approval Dialog */}
-      <Dialog open={approvalDialogOpen} onClose={handleCloseDialogs} maxWidth="sm" fullWidth>
+      <Dialog open={approvalDialogOpen} onClose={handleCloseDialogs} maxWidth="md" fullWidth>
         <DialogTitle>
           {currentBucketId ? 'Approve Bucket' : `Approve ${selectedBuckets.length} Bucket(s)`}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="textSecondary" gutterBottom>
-            {currentBucketId
-              ? 'This will approve the bucket and trigger EDI file generation.'
-              : `This will approve ${selectedBuckets.length} bucket(s) and trigger EDI file generation for each.`}
-          </Typography>
-          <TextField
-            fullWidth
-            label="Your Name (Required)"
-            value={actionBy}
-            onChange={(e) => setActionBy(e.target.value)}
-            sx={{ mt: 2 }}
-            required
-          />
-          <TextField
-            fullWidth
-            multiline
-            rows={3}
-            label="Comments (Optional)"
-            value={comments}
-            onChange={(e) => setComments(e.target.value)}
-            sx={{ mt: 2 }}
-          />
+          {loadingWorkflowConfig ? (
+            <Box display="flex" justifyContent="center" py={3}>
+              <CircularProgress size={30} />
+            </Box>
+          ) : (
+            <>
+              <Typography variant="body2" color="textSecondary" gutterBottom>
+                {currentBucketId
+                  ? 'This will approve the bucket and trigger EDI file generation.'
+                  : `This will approve ${selectedBuckets.length} bucket(s) and trigger EDI file generation for each.`}
+              </Typography>
+
+              {/* Show workflow info if COMBINED mode */}
+              {workflowConfig?.workflowMode === 'COMBINED' && currentBucketId && (
+                <Alert severity="info" sx={{ mt: 2, mb: 2 }}>
+                  <Typography variant="body2">
+                    <strong>Check Payment Required:</strong> This workflow requires check payment
+                    assignment during approval.
+                    {workflowConfig.assignmentMode === 'AUTO' && (
+                      <>
+                        <br />
+                        <strong>Auto-Assignment Mode:</strong> A check will be automatically assigned
+                        from available reservations.
+                      </>
+                    )}
+                  </Typography>
+                </Alert>
+              )}
+
+              <TextField
+                fullWidth
+                label="Your Name (Required)"
+                value={actionBy}
+                onChange={(e) => setActionBy(e.target.value)}
+                sx={{ mt: 2 }}
+                required
+              />
+              <TextField
+                fullWidth
+                multiline
+                rows={3}
+                label="Comments (Optional)"
+                value={comments}
+                onChange={(e) => setComments(e.target.value)}
+                sx={{ mt: 2 }}
+              />
+
+              {/* Check Payment Fields - Show only for COMBINED workflow with MANUAL assignment */}
+              {workflowConfig?.workflowMode === 'COMBINED' &&
+               workflowConfig?.assignmentMode === 'MANUAL' &&
+               currentBucketId && (
+                <>
+                  <Divider sx={{ my: 3 }}>
+                    <Typography variant="subtitle2" color="textSecondary">
+                      Check Payment Details
+                    </Typography>
+                  </Divider>
+
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Check Number (Required)"
+                        value={checkNumber}
+                        onChange={(e) => setCheckNumber(e.target.value)}
+                        required
+                        placeholder="CHK000123"
+                        helperText="Enter the check number"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Check Amount (Required)"
+                        type="number"
+                        value={checkAmount}
+                        onChange={(e) => setCheckAmount(e.target.value)}
+                        required
+                        inputProps={{ step: '0.01', min: '0' }}
+                        helperText="Total amount on the check"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Check Date (Required)"
+                        type="date"
+                        value={checkDate}
+                        onChange={(e) => setCheckDate(e.target.value)}
+                        required
+                        InputLabelProps={{ shrink: true }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Bank Name (Optional)"
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        placeholder="First National Bank"
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Routing Number (Optional)"
+                        value={routingNumber}
+                        onChange={(e) => setRoutingNumber(e.target.value)}
+                        placeholder="021000021"
+                        inputProps={{ maxLength: 9 }}
+                      />
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <TextField
+                        fullWidth
+                        label="Account Last 4 Digits (Optional)"
+                        value={accountLast4}
+                        onChange={(e) => setAccountLast4(e.target.value)}
+                        placeholder="1234"
+                        inputProps={{ maxLength: 4 }}
+                      />
+                    </Grid>
+                  </Grid>
+                </>
+              )}
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialogs}>Cancel</Button>
@@ -514,12 +748,12 @@ const ApprovalQueue: React.FC = () => {
             onClick={handleApprovalConfirm}
             variant="contained"
             color="success"
-            disabled={approveMutation.isPending || bulkApproveMutation.isPending}
+            disabled={approveMutation.isPending || bulkApproveMutation.isPending || loadingWorkflowConfig}
           >
             {approveMutation.isPending || bulkApproveMutation.isPending ? (
               <CircularProgress size={24} />
             ) : (
-              'Approve'
+              workflowConfig?.workflowMode === 'COMBINED' ? 'Approve & Assign Check' : 'Approve'
             )}
           </Button>
         </DialogActions>

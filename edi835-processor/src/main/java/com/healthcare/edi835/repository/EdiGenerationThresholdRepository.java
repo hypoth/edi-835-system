@@ -52,4 +52,13 @@ public interface EdiGenerationThresholdRepository extends JpaRepository<EdiGener
      * Checks if threshold name already exists.
      */
     boolean existsByThresholdName(String thresholdName);
+
+    /**
+     * Finds a threshold by bucketing rule ID.
+     * Returns first active threshold found.
+     */
+    @Query("SELECT t FROM EdiGenerationThreshold t " +
+           "WHERE t.linkedBucketingRule.id = :ruleId AND t.isActive = true " +
+           "ORDER BY t.createdAt ASC")
+    Optional<EdiGenerationThreshold> findByLinkedBucketingRuleId(@Param("ruleId") UUID ruleId);
 }

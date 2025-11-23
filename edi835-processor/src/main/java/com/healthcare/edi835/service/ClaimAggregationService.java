@@ -86,6 +86,15 @@ public class ClaimAggregationService {
         } catch (Exception e) {
             log.error("Error aggregating claim {}: {}", claim.getId(), e.getMessage(), e);
             handleRejectedClaim(claim, "Error during aggregation: " + e.getMessage());
+
+            // Store error in bucket for UI visibility (if bucket exists)
+            try {
+                EdiFileBucket bucket = findOrCreateBucket(claim, rule);
+                bucket.setLastError(e.getClass().getSimpleName() + ": " + e.getMessage());
+                bucketRepository.save(bucket);
+            } catch (Exception ignored) {
+                // Bucket lookup failed, error already logged
+            }
         }
     }
 

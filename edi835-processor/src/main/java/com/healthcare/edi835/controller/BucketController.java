@@ -1,13 +1,20 @@
 package com.healthcare.edi835.controller;
 
+import com.healthcare.edi835.entity.CheckPaymentWorkflowConfig;
+import com.healthcare.edi835.entity.EdiCommitCriteria;
 import com.healthcare.edi835.entity.EdiFileBucket;
+import com.healthcare.edi835.entity.EdiGenerationThreshold;
 import com.healthcare.edi835.entity.Payer;
 import com.healthcare.edi835.entity.Payee;
 import com.healthcare.edi835.model.dto.BucketConfigurationCheckDTO;
+import com.healthcare.edi835.model.dto.BucketConfigurationDTO;
 import com.healthcare.edi835.model.dto.BucketSummaryDTO;
 import com.healthcare.edi835.model.dto.CreatePayerFromBucketDTO;
 import com.healthcare.edi835.model.dto.CreatePayeeFromBucketDTO;
+import com.healthcare.edi835.repository.CheckPaymentWorkflowConfigRepository;
+import com.healthcare.edi835.repository.EdiCommitCriteriaRepository;
 import com.healthcare.edi835.repository.EdiFileBucketRepository;
+import com.healthcare.edi835.repository.EdiGenerationThresholdRepository;
 import com.healthcare.edi835.repository.PayerRepository;
 import com.healthcare.edi835.repository.PayeeRepository;
 import com.healthcare.edi835.service.BucketManagerService;
@@ -41,6 +48,9 @@ public class BucketController {
     private final PayerRepository payerRepository;
     private final PayeeRepository payeeRepository;
     private final EncryptionService encryptionService;
+    private final EdiGenerationThresholdRepository thresholdRepository;
+    private final CheckPaymentWorkflowConfigRepository workflowConfigRepository;
+    private final EdiCommitCriteriaRepository commitCriteriaRepository;
 
     public BucketController(
             EdiFileBucketRepository bucketRepository,
@@ -48,13 +58,19 @@ public class BucketController {
             ThresholdMonitorService thresholdMonitorService,
             PayerRepository payerRepository,
             PayeeRepository payeeRepository,
-            EncryptionService encryptionService) {
+            EncryptionService encryptionService,
+            EdiGenerationThresholdRepository thresholdRepository,
+            CheckPaymentWorkflowConfigRepository workflowConfigRepository,
+            EdiCommitCriteriaRepository commitCriteriaRepository) {
         this.bucketRepository = bucketRepository;
         this.bucketManagerService = bucketManagerService;
         this.thresholdMonitorService = thresholdMonitorService;
         this.payerRepository = payerRepository;
         this.payeeRepository = payeeRepository;
         this.encryptionService = encryptionService;
+        this.thresholdRepository = thresholdRepository;
+        this.workflowConfigRepository = workflowConfigRepository;
+        this.commitCriteriaRepository = commitCriteriaRepository;
     }
 
     // ==================== Bucket Retrieval ====================
@@ -226,12 +242,14 @@ public class BucketController {
     }
 
     @PostMapping("/{bucketId}/mark-failed")
-    public ResponseEntity<Void> markFailed(@PathVariable UUID bucketId) {
-        log.info("POST /api/v1/buckets/{}/mark-failed", bucketId);
+    public ResponseEntity<Void> markFailed(
+            @PathVariable UUID bucketId,
+            @RequestParam(required = false, defaultValue = "Manually marked as failed via API") String reason) {
+        log.info("POST /api/v1/buckets/{}/mark-failed - Reason: {}", bucketId, reason);
 
         return bucketRepository.findById(bucketId)
                 .map(bucket -> {
-                    bucketManagerService.markFailed(bucket);
+                    bucketManagerService.markFailed(bucket, reason);
                     return ResponseEntity.ok().<Void>build();
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -396,6 +414,79 @@ public class BucketController {
                             .build();
 
                     return ResponseEntity.ok(check);
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Get bucket configuration (threshold, workflow config, commit criteria).
+     * Returns the configuration applicable to this bucket based on its bucketing rule.
+     *
+     * GET /api/v1/buckets/{bucketId}/configuration
+     */
+    @GetMapping("/{bucketId}/configuration")
+    public ResponseEntity<BucketConfigurationDTO> getBucketConfiguration(@PathVariable UUID bucketId) {
+        log.debug("GET /api/v1/buckets/{}/configuration", bucketId);
+
+        return bucketRepository.findById(bucketId)
+                .map(bucket -> {
+                    BucketConfigurationDTO.BucketConfigurationDTOBuilder configBuilder = BucketConfigurationDTO.builder();
+
+                    // Get bucketing rule ID from bucket
+                    UUID bucketingRuleId = bucket.getBucketingRuleId();
+
+                    if (bucketingRuleId != null) {
+                        // Fetch threshold linked to this bucketing rule
+                        thresholdRepository.findByLinkedBucketingRuleId(bucketingRuleId)
+                                .ifPresent(threshold -> {
+                                    configBuilder.threshold(BucketConfigurationDTO.ThresholdDTO.builder()
+                                            .thresholdId(threshold.getId().toString())
+                                            .thresholdName(threshold.getThresholdName())
+                                            .thresholdType(threshold.getThresholdType() != null ?
+                                                    threshold.getThresholdType().name() : null)
+                                            .maxClaims(threshold.getMaxClaims())
+                                            .maxAmount(threshold.getMaxAmount())
+                                            .timeDuration(threshold.getTimeDuration() != null ?
+                                                    threshold.getTimeDuration().name() : null)
+                                            .isActive(threshold.getIsActive() != null && threshold.getIsActive())
+                                            .build());
+
+                                    // Fetch workflow config linked to this threshold
+                                    workflowConfigRepository.findByThresholdId(threshold.getId())
+                                            .ifPresent(workflowConfig -> {
+                                                configBuilder.workflowConfig(BucketConfigurationDTO.WorkflowConfigDTO.builder()
+                                                        .id(workflowConfig.getId().toString())
+                                                        .configName(workflowConfig.getConfigName())
+                                                        .workflowMode(workflowConfig.getWorkflowMode() != null ?
+                                                                workflowConfig.getWorkflowMode().name() : null)
+                                                        .assignmentMode(workflowConfig.getAssignmentMode() != null ?
+                                                                workflowConfig.getAssignmentMode().name() : null)
+                                                        .requireAcknowledgment(workflowConfig.getRequireAcknowledgment() != null &&
+                                                                workflowConfig.getRequireAcknowledgment())
+                                                        .description(workflowConfig.getDescription())
+                                                        .isActive(workflowConfig.getIsActive() != null && workflowConfig.getIsActive())
+                                                        .build());
+                                            });
+                                });
+
+                        // Fetch commit criteria linked to this bucketing rule
+                        commitCriteriaRepository.findByLinkedBucketingRuleId(bucketingRuleId)
+                                .ifPresent(criteria -> {
+                                    configBuilder.commitCriteria(BucketConfigurationDTO.CommitCriteriaDTO.builder()
+                                            .id(criteria.getId().toString())
+                                            .criteriaName(criteria.getCriteriaName())
+                                            .commitMode(criteria.getCommitMode() != null ?
+                                                    criteria.getCommitMode().name() : null)
+                                            .autoCommitThreshold(criteria.getAutoCommitThreshold())
+                                            .manualApprovalThreshold(criteria.getManualApprovalThreshold())
+                                            .approvalRequiredRoles(criteria.getApprovalRequiredRoles() != null ?
+                                                    java.util.Arrays.asList(criteria.getApprovalRequiredRoles()) : null)
+                                            .isActive(criteria.getIsActive() != null && criteria.getIsActive())
+                                            .build());
+                                });
+                    }
+
+                    return ResponseEntity.ok(configBuilder.build());
                 })
                 .orElse(ResponseEntity.notFound().build());
     }

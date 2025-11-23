@@ -101,11 +101,11 @@ public class EdiGenerationEventListener {
         } catch (Exception e) {
             log.error("EDI file generation failed for bucket: {}", bucket.getBucketId(), e);
 
-            // Mark bucket as failed
+            // Mark bucket as failed with error details
             try {
                 EdiFileBucket failedBucket = bucketRepository.findById(bucket.getBucketId())
                         .orElseThrow(() -> new IllegalStateException("Bucket not found: " + bucket.getBucketId()));
-                bucketManagerService.markFailed(failedBucket);
+                bucketManagerService.markFailed(failedBucket, e);
             } catch (Exception markFailedError) {
                 log.error("Failed to mark bucket as FAILED: {}", bucket.getBucketId(), markFailedError);
             }

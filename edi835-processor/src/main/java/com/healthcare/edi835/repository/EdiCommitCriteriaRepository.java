@@ -3,6 +3,8 @@ package com.healthcare.edi835.repository;
 import com.healthcare.edi835.entity.EdiCommitCriteria;
 import com.healthcare.edi835.entity.EdiBucketingRule;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -41,4 +43,13 @@ public interface EdiCommitCriteriaRepository extends JpaRepository<EdiCommitCrit
      * Checks if criteria name already exists.
      */
     boolean existsByCriteriaName(String criteriaName);
+
+    /**
+     * Finds commit criteria by bucketing rule ID.
+     * Returns first active criteria found.
+     */
+    @Query("SELECT c FROM EdiCommitCriteria c " +
+           "WHERE c.linkedBucketingRule.id = :ruleId AND c.isActive = true " +
+           "ORDER BY c.createdAt ASC")
+    Optional<EdiCommitCriteria> findByLinkedBucketingRuleId(@Param("ruleId") UUID ruleId);
 }

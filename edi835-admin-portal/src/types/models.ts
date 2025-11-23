@@ -65,7 +65,8 @@ export interface Alert {
 // Bucket Types
 export interface Bucket {
   bucketId: string;
-  bucketingRule: BucketingRule;
+  bucketingRule?: BucketingRule;
+  bucketingRuleId?: string;
   bucketingRuleName: string;
   payerId: string;
   payerName: string;
@@ -81,6 +82,9 @@ export interface Bucket {
   awaitingApprovalSince?: string;
   generationStartedAt?: string;
   generationCompletedAt?: string;
+  // Error tracking fields
+  lastErrorMessage?: string;
+  lastErrorAt?: string;
 }
 
 // File Types
@@ -168,6 +172,9 @@ export interface GenerationThreshold {
   isActive: boolean;
   createdAt: string;
 }
+
+// Type alias for compatibility
+export type Threshold = GenerationThreshold & { id: string };
 
 export interface CommitCriteria {
   id: string;
@@ -264,4 +271,164 @@ export interface CreatePayeeFromBucketRequest {
   requiresSpecialHandling?: boolean;
   isActive?: boolean;
   createdBy?: string;
+}
+
+// Check Payment Types (Phase 1: Check Payment Implementation)
+
+export enum CheckStatus {
+  RESERVED = 'RESERVED',
+  ASSIGNED = 'ASSIGNED',
+  ACKNOWLEDGED = 'ACKNOWLEDGED',
+  ISSUED = 'ISSUED',
+  VOID = 'VOID',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum ReservationStatus {
+  ACTIVE = 'ACTIVE',
+  EXHAUSTED = 'EXHAUSTED',
+  CANCELLED = 'CANCELLED',
+}
+
+export interface CheckPayment {
+  id: string;
+  bucketId: string;
+  checkNumber: string;
+  checkAmount: number;
+  checkDate: string;
+  bankName?: string;
+  routingNumber?: string;
+  accountNumberLast4?: string;
+  status: CheckStatus;
+  assignedBy?: string;
+  assignedAt?: string;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+  issuedBy?: string;
+  issuedAt?: string;
+  voidReason?: string;
+  voidedBy?: string;
+  voidedAt?: string;
+  paymentMethodId?: string;
+  createdAt: string;
+  updatedAt: string;
+  canBeVoided?: boolean;
+  hoursUntilVoidDeadline?: number;
+}
+
+export interface CheckReservation {
+  id: string;
+  checkNumberStart: string;
+  checkNumberEnd: string;
+  totalChecks: number;
+  checksUsed: number;
+  checksRemaining: number;
+  usagePercentage: number;
+  bankName: string;
+  routingNumber?: string;
+  accountNumberLast4?: string;
+  paymentMethodId?: string;
+  payerId: string;
+  payerName?: string;
+  status: ReservationStatus;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  isLowStock?: boolean;
+  isExhausted?: boolean;
+}
+
+export interface CheckAuditLog {
+  id: number;
+  checkPaymentId: string;
+  checkNumber: string;
+  action: string;
+  bucketId?: string;
+  amount?: number;
+  performedBy: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface ManualCheckAssignmentRequest {
+  checkNumber: string;
+  checkDate: string;
+  bankName?: string;
+  routingNumber?: string;
+  accountLast4?: string;
+  assignedBy: string;
+}
+
+export interface CreateCheckReservationRequest {
+  payerId: string;
+  checkNumberStart: string;
+  checkNumberEnd: string;
+  bankName: string;
+  routingNumber?: string;
+  accountLast4?: string;
+  paymentMethodId?: string;
+  createdBy: string;
+}
+
+export interface AcknowledgeCheckRequest {
+  acknowledgedBy: string;
+}
+
+export interface IssueCheckRequest {
+  issuedBy: string;
+}
+
+export interface VoidCheckRequest {
+  reason: string;
+  voidedBy: string;
+}
+
+export interface ReservationSummary {
+  totalActiveReservations: number;
+  totalAvailableChecks: number;
+  totalUsedChecks: number;
+  lowStockReservations: number;
+  needsAttention: boolean;
+}
+
+// Check Payment Workflow Configuration Types
+export enum WorkflowMode {
+  NONE = 'NONE',           // No check payment required (EFT/other)
+  SEPARATE = 'SEPARATE',   // Approve first, then assign check separately
+  COMBINED = 'COMBINED',   // Approve and assign check in single dialog
+}
+
+export enum AssignmentMode {
+  MANUAL = 'MANUAL',       // Manual check entry only
+  AUTO = 'AUTO',           // Auto-assign from reservations only
+  BOTH = 'BOTH',           // User can choose manual or auto
+}
+
+export interface CheckPaymentWorkflowConfig {
+  id: string;
+  configName: string;
+  workflowMode: WorkflowMode;
+  assignmentMode: AssignmentMode;
+  requireAcknowledgment: boolean;
+  linkedThresholdId: string;
+  linkedThresholdName?: string;
+  linkedBucketingRuleName?: string;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
+export interface CheckPaymentWorkflowConfigRequest {
+  configName: string;
+  workflowMode: string;
+  assignmentMode: string;
+  requireAcknowledgment: boolean;
+  linkedThresholdId: string;
+  description?: string;
+  isActive?: boolean;
+  createdBy?: string;
+  updatedBy?: string;
 }

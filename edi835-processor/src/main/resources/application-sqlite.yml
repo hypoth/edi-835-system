@@ -117,6 +117,15 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
+# Check Reservation Transaction Configuration
+# Controls whether check reservations use separate transactions (REQUIRES_NEW)
+check-reservation:
+  # SQLite: Use single transaction (participates in calling transaction)
+  # SQLite only supports one writer at a time, so REQUIRES_NEW would cause
+  # connection pool exhaustion/deadlock with pool size of 1
+  use-separate-transaction: false
+  enable-compensation: false  # Not needed - transaction rolls back together
+
 # Server Configuration
 server:
   port: ${SERVER_PORT:8080}

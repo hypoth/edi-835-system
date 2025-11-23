@@ -114,4 +114,41 @@ export const bucketService = {
     const response = await apiClient.post(`/buckets/${request.bucketId}/create-payee`, request);
     return response.data;
   },
+
+  // Get bucket configuration (threshold, workflow config, commit criteria)
+  getBucketConfiguration: async (bucketId: string): Promise<BucketConfiguration> => {
+    const response = await apiClient.get(`/buckets/${bucketId}/configuration`);
+    return response.data;
+  },
 };
+
+// Type for bucket configuration response
+export interface BucketConfiguration {
+  threshold?: {
+    thresholdId: string;
+    thresholdName: string;
+    thresholdType: string;
+    maxClaims?: number;
+    maxAmount?: number;
+    timeDuration?: string;
+    isActive: boolean;
+  };
+  workflowConfig?: {
+    id: string;
+    configName: string;
+    workflowMode: string;
+    assignmentMode: string;
+    requireAcknowledgment: boolean;
+    description?: string;
+    isActive: boolean;
+  };
+  commitCriteria?: {
+    id: string;
+    criteriaName: string;
+    commitMode: string;
+    autoCommitThreshold?: number;
+    manualApprovalThreshold?: number;
+    approvalRequiredRoles?: string[];
+    isActive: boolean;
+  };
+}

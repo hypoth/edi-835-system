@@ -1,14 +1,20 @@
 package com.healthcare.edi835.service;
 
 import com.healthcare.edi835.entity.BucketApprovalLog;
+import com.healthcare.edi835.entity.CheckPaymentWorkflowConfig;
 import com.healthcare.edi835.entity.EdiFileBucket;
+import com.healthcare.edi835.entity.EdiGenerationThreshold;
+import com.healthcare.edi835.exception.CheckAssignmentException;
 import com.healthcare.edi835.repository.BucketApprovalLogRepository;
+import com.healthcare.edi835.repository.CheckPaymentWorkflowConfigRepository;
 import com.healthcare.edi835.repository.EdiFileBucketRepository;
+import com.healthcare.edi835.repository.EdiGenerationThresholdRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -31,18 +37,29 @@ public class ApprovalWorkflowService {
     private final EdiFileBucketRepository bucketRepository;
     private final BucketApprovalLogRepository approvalLogRepository;
     private final BucketManagerService bucketManagerService;
+    private final EdiGenerationThresholdRepository thresholdRepository;
+    private final CheckPaymentWorkflowConfigRepository workflowConfigRepository;
+    private final CheckPaymentService checkPaymentService;
 
     public ApprovalWorkflowService(
             EdiFileBucketRepository bucketRepository,
             BucketApprovalLogRepository approvalLogRepository,
-            BucketManagerService bucketManagerService) {
+            BucketManagerService bucketManagerService,
+            EdiGenerationThresholdRepository thresholdRepository,
+            CheckPaymentWorkflowConfigRepository workflowConfigRepository,
+            CheckPaymentService checkPaymentService) {
         this.bucketRepository = bucketRepository;
         this.approvalLogRepository = approvalLogRepository;
         this.bucketManagerService = bucketManagerService;
+        this.thresholdRepository = thresholdRepository;
+        this.workflowConfigRepository = workflowConfigRepository;
+        this.checkPaymentService = checkPaymentService;
     }
 
     /**
      * Approves a bucket for EDI file generation.
+     * Note: This marks the bucket as approved but does NOT trigger generation.
+     * Generation is triggered separately after payment assignment (if required).
      *
      * @param bucketId the bucket ID to approve
      * @param approvedBy the username/ID of the approver
@@ -69,11 +86,103 @@ public class ApprovalWorkflowService {
                 bucket, approvedBy, comments);
         approvalLogRepository.save(approvalLog);
 
-        // Transition bucket to generation
-        bucketManagerService.transitionToGeneration(bucket);
+        // Mark bucket as approved (set approval metadata)
+        // Status remains PENDING_APPROVAL until payment is assigned (if required)
+        bucket.setApprovedBy(approvedBy);
+        bucket.setApprovedAt(java.time.LocalDateTime.now());
 
-        log.info("Bucket {} approved by {} and transitioned to GENERATING. Claims: {}, Amount: {}",
-                bucketId, approvedBy, bucket.getClaimCount(), bucket.getTotalAmount());
+        // If payment is NOT required, trigger generation immediately
+        if (!bucket.isPaymentRequired()) {
+            log.info("Payment not required for bucket {}, transitioning to generation", bucketId);
+            bucketManagerService.transitionToGeneration(bucket);
+            log.info("Bucket {} approved by {} and transitioned to GENERATING. Claims: {}, Amount: {}",
+                    bucketId, approvedBy, bucket.getClaimCount(), bucket.getTotalAmount());
+        } else {
+            // Payment required - check if auto-assignment is configured
+            boolean autoAssigned = attemptAutoAssignment(bucket, approvedBy);
+
+            if (autoAssigned) {
+                // Auto-assignment succeeded - CheckPaymentService already triggered generation
+                // Just log success (don't call transitionToGeneration again)
+                log.info("Bucket {} approved by {} with auto-assigned check and transitioned to GENERATING. Claims: {}, Amount: {}",
+                        bucketId, approvedBy, bucket.getClaimCount(), bucket.getTotalAmount());
+            } else {
+                // Auto-assignment not configured or failed - save and await manual assignment
+                bucketRepository.save(bucket);
+                log.info("Bucket {} approved by {} and awaiting manual check payment assignment. Claims: {}, Amount: {}",
+                        bucketId, approvedBy, bucket.getClaimCount(), bucket.getTotalAmount());
+            }
+        }
+    }
+
+    /**
+     * Attempts to auto-assign a check to the bucket if workflow is configured for it.
+     *
+     * <p>This method propagates exceptions to ensure the entire approval transaction
+     * is rolled back if check assignment fails. This guarantees atomicity - either
+     * approval + check assignment both succeed, or both are rolled back.</p>
+     *
+     * @param bucket the bucket to assign check to
+     * @param approvedBy the user who approved the bucket
+     * @return true if check was auto-assigned, false if auto-assignment is not configured
+     * @throws CheckAssignmentException if auto-assignment is configured but fails
+     */
+    private boolean attemptAutoAssignment(EdiFileBucket bucket, String approvedBy) {
+        // Get bucketing rule ID from bucket
+        UUID bucketingRuleId = bucket.getBucketingRuleId();
+        if (bucketingRuleId == null) {
+            log.debug("Bucket {} has no bucketing rule, skipping auto-assignment", bucket.getBucketId());
+            return false;
+        }
+
+        // Look up threshold for this bucketing rule
+        Optional<EdiGenerationThreshold> thresholdOpt = thresholdRepository
+                .findByLinkedBucketingRuleId(bucketingRuleId);
+        if (thresholdOpt.isEmpty()) {
+            log.debug("No threshold found for bucketing rule {}, skipping auto-assignment", bucketingRuleId);
+            return false;
+        }
+
+        // Look up workflow config for this threshold
+        Optional<CheckPaymentWorkflowConfig> workflowConfigOpt = workflowConfigRepository
+                .findByThresholdId(thresholdOpt.get().getId());
+        if (workflowConfigOpt.isEmpty()) {
+            log.debug("No workflow config found for threshold {}, skipping auto-assignment",
+                    thresholdOpt.get().getId());
+            return false;
+        }
+
+        CheckPaymentWorkflowConfig workflowConfig = workflowConfigOpt.get();
+
+        // Check if workflow is SEPARATE and allows auto-assignment
+        if (workflowConfig.isSeparateWorkflow() && workflowConfig.allowsAutoAssignment()) {
+            log.info("Bucket {} has SEPARATE workflow with AUTO assignment mode, attempting auto-assignment",
+                    bucket.getBucketId());
+
+            try {
+                // Auto-assign check - let exceptions propagate to trigger rollback
+                checkPaymentService.assignCheckAutomaticallyFromBucket(bucket.getBucketId(), approvedBy);
+                log.info("Successfully auto-assigned check to bucket {}", bucket.getBucketId());
+
+                // Reload bucket to get updated state (check payment assigned)
+                EdiFileBucket updatedBucket = bucketRepository.findById(bucket.getBucketId())
+                        .orElse(bucket);
+                bucket.setCheckPayment(updatedBucket.getCheckPayment());
+                bucket.setPaymentStatus(updatedBucket.getPaymentStatus());
+                bucket.setPaymentDate(updatedBucket.getPaymentDate());
+
+                return true;
+            } catch (Exception e) {
+                // Wrap and re-throw to trigger transaction rollback
+                log.error("Auto-assignment failed for bucket {}. Rolling back approval transaction.",
+                        bucket.getBucketId(), e);
+                throw new CheckAssignmentException(bucket.getBucketId(), "AUTO", e);
+            }
+        } else {
+            log.debug("Bucket {} workflow mode is {} with assignment mode {}, auto-assignment not applicable",
+                    bucket.getBucketId(), workflowConfig.getWorkflowMode(), workflowConfig.getAssignmentMode());
+            return false;
+        }
     }
 
     /**
@@ -109,8 +218,9 @@ public class ApprovalWorkflowService {
                 bucket, rejectedBy, rejectionReason);
         approvalLogRepository.save(rejectionLog);
 
-        // Transition bucket back to ACCUMULATING or mark as FAILED
-        bucket.markFailed();
+        // Transition bucket to FAILED with rejection reason
+        String errorMessage = String.format("Rejected by %s: %s", rejectedBy, rejectionReason);
+        bucket.markFailed(errorMessage);
         bucketRepository.save(bucket);
 
         log.warn("Bucket {} rejected by {}. Reason: {}", bucketId, rejectedBy, rejectionReason);
@@ -224,13 +334,14 @@ public class ApprovalWorkflowService {
 
     /**
      * Bulk approves multiple buckets.
+     * Note: This method is NOT transactional - each bucket approval runs in its own transaction.
+     * This allows partial success: some buckets can succeed even if others fail.
      *
      * @param bucketIds list of bucket IDs to approve
      * @param approvedBy the username/ID of the approver
      * @param comments optional approval comments
      * @return count of successfully approved buckets
      */
-    @Transactional
     public int bulkApproveBuckets(List<UUID> bucketIds, String approvedBy, String comments) {
         log.info("Bulk approval requested for {} buckets by {}", bucketIds.size(), approvedBy);
 

@@ -1,5 +1,6 @@
 package com.healthcare.edi835.service;
 
+import com.healthcare.edi835.entity.CheckPayment;
 import com.healthcare.edi835.entity.ClaimProcessingLog;
 import com.healthcare.edi835.entity.EdiFileBucket;
 import com.healthcare.edi835.entity.FileGenerationHistory;
@@ -58,16 +59,19 @@ public class Edi835GeneratorService {
     private final ClaimProcessingLogRepository claimLogRepository;
     private final PayerRepository payerRepository;
     private final PayeeRepository payeeRepository;
+    private final CheckPaymentService checkPaymentService;
     private Schema schema;
 
     public Edi835GeneratorService(
             ClaimProcessingLogRepository claimLogRepository,
             PayerRepository payerRepository,
-            PayeeRepository payeeRepository) {
+            PayeeRepository payeeRepository,
+            CheckPaymentService checkPaymentService) {
         this.outputFactory = EDIOutputFactory.newFactory();
         this.claimLogRepository = claimLogRepository;
         this.payerRepository = payerRepository;
         this.payeeRepository = payeeRepository;
+        this.checkPaymentService = checkPaymentService;
     }
 
     @PostConstruct
@@ -207,17 +211,40 @@ public class Edi835GeneratorService {
                 .address(payeeAddress)
                 .build();
 
-        // Build payment information
+        // Build payment information (Phase 1: Check Payment Implementation)
+        // Get check payment if assigned to bucket
+        CheckPayment checkPayment = checkPaymentService.getCheckPaymentForBucket(bucket.getBucketId())
+                .orElse(null);
+
+        String paymentMethodCode;
+        String traceNumber;
+        LocalDate effectiveDate;
+
+        if (checkPayment != null) {
+            // Check payment assigned - use check details
+            paymentMethodCode = "CHK";  // CHK = Check
+            traceNumber = checkPayment.getCheckNumber();
+            effectiveDate = checkPayment.getCheckDate();
+            log.debug("Using check payment for bucket {}: checkNumber={}, date={}",
+                    bucket.getBucketId(), traceNumber, effectiveDate);
+        } else {
+            // No check payment - use default values
+            paymentMethodCode = "ACH";  // ACH = Automated Clearing House
+            traceNumber = bucket.getBucketId().toString();
+            effectiveDate = LocalDate.now();
+            log.debug("No check payment for bucket {}, using default payment info", bucket.getBucketId());
+        }
+
         PaymentInfo paymentInfo = PaymentInfo.builder()
                 .transactionHandlingCode("I") // I = Information only, C = Payment
                 .totalActualProviderPaymentAmount(bucket.getTotalAmount())
                 .creditDebitFlag("C") // C = Credit
-                .paymentMethodCode("ACH") // ACH = Automated Clearing House
+                .paymentMethodCode(paymentMethodCode)
                 .originatingCompanyIdentifier(payer.getPayerId())
-                .checkOrEftTraceNumber(bucket.getBucketId().toString())
+                .checkOrEftTraceNumber(traceNumber)
                 .payerIdentifier(payer.getPayerId())
                 .payeeIdentifier(payee.getPayeeId())
-                .paymentEffectiveDate(LocalDate.now())
+                .paymentEffectiveDate(effectiveDate)
                 .build();
 
         // Convert claims to ClaimPayment objects
@@ -244,6 +271,9 @@ public class Edi835GeneratorService {
                 .payerName(payer.getPayerName())
                 .payeeId(payee.getPayeeId())
                 .payeeName(payee.getPayeeName())
+                // ISA envelope IDs - use payer's ISA Sender ID for ISA06, payee ID for ISA08
+                .isaSenderId(payer.getIsaSenderId())
+                .isaReceiverId(payee.getPayeeId()) // Payee doesn't have ISA-specific ID, use payeeId
                 .paymentInfo(paymentInfo)
                 .payer(payerParty)
                 .payee(payeeParty)

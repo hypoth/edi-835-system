@@ -37,15 +37,16 @@ interface ThresholdValidatorProps {
   showValidation?: boolean;
 }
 
-const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
-  threshold,
-  existingThresholds = [],
-  showValidation = true,
-}) => {
-  const validationResult = useMemo((): ValidationResult => {
-    const errors: ValidationMessage[] = [];
-    const warnings: ValidationMessage[] = [];
-    const info: ValidationMessage[] = [];
+/**
+ * Shared validation logic used by both component and hook
+ */
+const validateThreshold = (
+  threshold: Partial<GenerationThreshold>,
+  existingThresholds: GenerationThreshold[] = []
+): ValidationResult => {
+  const errors: ValidationMessage[] = [];
+  const warnings: ValidationMessage[] = [];
+  const info: ValidationMessage[] = [];
 
     // Required field validation
     if (!threshold.thresholdName?.trim()) {
@@ -200,13 +201,23 @@ const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
       });
     }
 
-    return {
-      isValid: errors.length === 0,
-      errors,
-      warnings,
-      info,
-    };
-  }, [threshold, existingThresholds]);
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+    info,
+  };
+};
+
+const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
+  threshold,
+  existingThresholds = [],
+  showValidation = true,
+}) => {
+  const validationResult = useMemo(
+    () => validateThreshold(threshold, existingThresholds),
+    [threshold, existingThresholds]
+  );
 
   if (!showValidation) {
     return null;
@@ -302,8 +313,6 @@ const ThresholdValidator: React.FC<ThresholdValidatorProps> = ({
   );
 };
 
-export default ThresholdValidator;
-
 /**
  * Hook for programmatic validation without rendering
  */
@@ -311,19 +320,10 @@ export const useThresholdValidation = (
   threshold: Partial<GenerationThreshold>,
   existingThresholds?: GenerationThreshold[]
 ): ValidationResult => {
-  return useMemo(() => {
-    const validator = ThresholdValidator({
-      threshold,
-      existingThresholds,
-      showValidation: false,
-    });
-    // Extract validation logic (simplified version)
-    // In practice, you'd extract the validation logic to a shared function
-    return {
-      isValid: true,
-      errors: [],
-      warnings: [],
-      info: [],
-    };
-  }, [threshold, existingThresholds]);
+  return useMemo(
+    () => validateThreshold(threshold, existingThresholds || []),
+    [threshold, existingThresholds]
+  );
 };
+
+export default ThresholdValidator;

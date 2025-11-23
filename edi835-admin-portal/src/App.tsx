@@ -22,6 +22,11 @@ import BucketingRulesConfig from './pages/config/BucketingRulesConfig';
 import ThresholdsConfigEnhanced from './pages/config/ThresholdsConfigEnhanced';
 import CommitCriteriaConfig from './pages/config/CommitCriteriaConfig';
 import FileNamingTemplatesConfig from './pages/config/FileNamingTemplatesConfig';
+import CheckPaymentWorkflowConfig from './pages/config/CheckPaymentWorkflowConfig';
+import CheckPaymentConfigPage from './pages/config/CheckPaymentConfig';
+import CheckPaymentManagement from './pages/checkpayments/CheckPaymentManagement';
+import CheckReservationsManagement from './pages/checkpayments/CheckReservationsManagement';
+import CheckUsageStatus from './pages/checkpayments/CheckUsageStatus';
 
 // Create theme
 const theme = createTheme({
@@ -98,6 +103,11 @@ const App: React.FC = () => {
               {/* Approvals */}
               <Route path="/approvals" element={<ApprovalQueue />} />
 
+              {/* Check Payments */}
+              <Route path="/check-payments" element={<CheckPaymentManagement />} />
+              <Route path="/check-reservations" element={<CheckReservationsManagement />} />
+              <Route path="/check-usage" element={<CheckUsageStatus />} />
+
               {/* Files */}
               <Route path="/files" element={<FileList />} />
               <Route path="/files/:fileId" element={<FileDetails />} />
@@ -112,6 +122,8 @@ const App: React.FC = () => {
               <Route path="/config/thresholds-enhanced" element={<ThresholdsConfigEnhanced />} />
               <Route path="/config/criteria" element={<CommitCriteriaConfig />} />
               <Route path="/config/templates" element={<FileNamingTemplatesConfig />} />
+              <Route path="/config/check-payment-workflow" element={<CheckPaymentWorkflowConfig />} />
+              <Route path="/config/check-payment-settings" element={<CheckPaymentConfigPage />} />
 
               {/* Redirect unknown routes to dashboard */}
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
